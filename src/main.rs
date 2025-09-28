@@ -66,71 +66,43 @@ async fn main(_spawner: Spawner) {
     uvw_pwm.disable(Channel::Ch3);
     uvw_pwm.set_dead_time(1);
 
-    let mut step_delay = 100u64; // 初期ディレイ（100ms）
-    let acceleration_rate = 0.98f32; // 加速率（ディレイを98%に減少）
-    let min_delay = 5u64; // 最小ディレイ（5ms）
+    uvw_pwm.enable(Channel::Ch1);
+    uvw_pwm.enable(Channel::Ch2);
+    uvw_pwm.enable(Channel::Ch3);
+
+    let mut angle = 0.0f32;
+    let max_duty = 99u16;
+    let mut angular_velocity = 0.01f32; // 初期角速度（ラジアン/ループ）
+    let max_angular_velocity = 1f32; // 最大角速度
+    let acceleration_rate = 1.02f32; // 加速率（2%増加）
+    let amplitude = (max_duty as f32) / 2.0;
+    let offset = amplitude;
 
     loop {
-        // 徐々に加速（ディレイを減少）
-        if step_delay > min_delay {
-            step_delay = ((step_delay as f32) * acceleration_rate) as u64;
-            if step_delay < min_delay {
-                step_delay = min_delay;
+        // 3相正弦波PWMデューティ計算（120度位相差）
+        let duty_u = (amplitude * sin(angle as f64) as f32 + offset) as u16;
+        let duty_v = (amplitude * sin((angle + 2.094395) as f64) as f32 + offset) as u16; // +120度
+        let duty_w = (amplitude * sin((angle + 4.188790) as f64) as f32 + offset) as u16; // +240度
+
+        // 各相のPWMデューティ設定
+        uvw_pwm.set_duty(Channel::Ch1, duty_u);
+        uvw_pwm.set_duty(Channel::Ch2, duty_v);
+        uvw_pwm.set_duty(Channel::Ch3, duty_w);
+
+        // 徐々に加速
+        if angular_velocity < max_angular_velocity {
+            angular_velocity *= acceleration_rate;
+            if angular_velocity > max_angular_velocity {
+                angular_velocity = max_angular_velocity;
             }
         }
 
-        // Step 1: U-High, V-Low, W-Off
-        uvw_pwm.set_duty(Channel::Ch1, 99);
-        uvw_pwm.set_duty(Channel::Ch2, 0);
-        uvw_pwm.set_duty(Channel::Ch3, 0);
-        uvw_pwm.enable(Channel::Ch1);
-        uvw_pwm.enable(Channel::Ch2);
-        uvw_pwm.disable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
+        // 角度更新
+        angle += angular_velocity;
+        if angle >= 6.283185 { // 2π
+            angle -= 6.283185;
+        }
 
-        // Step 2: U-High, V-Off, W-Low
-        uvw_pwm.set_duty(Channel::Ch1, 99);
-        uvw_pwm.set_duty(Channel::Ch2, 0);
-        uvw_pwm.set_duty(Channel::Ch3, 0);
-        uvw_pwm.enable(Channel::Ch1);
-        uvw_pwm.disable(Channel::Ch2);
-        uvw_pwm.enable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
-
-        // Step 3: U-Off, V-High, W-Low
-        uvw_pwm.set_duty(Channel::Ch1, 0);
-        uvw_pwm.set_duty(Channel::Ch2, 99);
-        uvw_pwm.set_duty(Channel::Ch3, 0);
-        uvw_pwm.disable(Channel::Ch1);
-        uvw_pwm.enable(Channel::Ch2);
-        uvw_pwm.enable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
-
-        // Step 4: U-Low, V-High, W-Off
-        uvw_pwm.set_duty(Channel::Ch1, 0);
-        uvw_pwm.set_duty(Channel::Ch2, 99);
-        uvw_pwm.set_duty(Channel::Ch3, 0);
-        uvw_pwm.enable(Channel::Ch1);
-        uvw_pwm.enable(Channel::Ch2);
-        uvw_pwm.disable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
-
-        // Step 5: U-Low, V-Off, W-High
-        uvw_pwm.set_duty(Channel::Ch1, 0);
-        uvw_pwm.set_duty(Channel::Ch2, 0);
-        uvw_pwm.set_duty(Channel::Ch3, 99);
-        uvw_pwm.enable(Channel::Ch1);
-        uvw_pwm.disable(Channel::Ch2);
-        uvw_pwm.enable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
-
-        // Step 6: U-Off, V-Low, W-High
-        uvw_pwm.set_duty(Channel::Ch1, 0);
-        uvw_pwm.set_duty(Channel::Ch2, 0);
-        uvw_pwm.set_duty(Channel::Ch3, 99);
-        uvw_pwm.disable(Channel::Ch1);
-        uvw_pwm.enable(Channel::Ch2);
-        uvw_pwm.enable(Channel::Ch3);
-        Timer::after(Duration::from_millis(step_delay)).await;
+        Timer::after(Duration::from_millis(1)).await;
     }
 }
