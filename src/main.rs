@@ -11,6 +11,7 @@ use {defmt_rtt as _, panic_probe as _};
 use embassy_executor::Spawner;
 use embassy_stm32::{
     gpio::{Level, Output, Speed},
+    opamp::{OpAmp, OpAmpSpeed},
     time::Hertz,
     timer::{
         complementary_pwm::{ComplementaryPwm, ComplementaryPwmPin},
@@ -22,12 +23,49 @@ use embassy_stm32::{
 use embassy_time::{Duration, Timer};
 use libm::sin;
 
+#[embassy_executor::task]
+pub async fn led_task(
+    mut led1: Output<'static>,
+    mut led2: Output<'static>,
+    mut led3: Output<'static>,
+) {
+    loop {
+        led1.set_low();
+        led2.set_high();
+        led3.set_high();
+        Timer::after(Duration::from_millis(500)).await;
+
+        led1.set_high();
+        led2.set_low();
+        led3.set_high();
+        Timer::after(Duration::from_millis(500)).await;
+
+        led1.set_high();
+        led2.set_high();
+        led3.set_low();
+        Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+#[embassy_executor::task]
+pub async fn motor_task() {}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
-    let mut led1 = Output::new(p.PC13, Level::High, Speed::Low);
-    let mut led2 = Output::new(p.PC14, Level::High, Speed::Low);
-    let mut led3 = Output::new(p.PC15, Level::High, Speed::Low);
+
+    let led1 = Output::new(p.PC13, Level::High, Speed::Low);
+    let led2 = Output::new(p.PC14, Level::High, Speed::Low);
+    let led3 = Output::new(p.PC15, Level::High, Speed::Low);
+
+    spawner.spawn(led_task(led1, led2, led3)).unwrap();
+
+    let mut op1 = OpAmp::new(p.OPAMP1, OpAmpSpeed::Normal);
+    op1.standalone_int(p.PA1, p.PA3);
+    let mut op2 = OpAmp::new(p.OPAMP2, OpAmpSpeed::Normal);
+    op2.standalone_int(p.PA7, p.PC5);
+    let mut op3 = OpAmp::new(p.OPAMP3, OpAmpSpeed::Normal);
+    op3.standalone_int(p.PB0, p.PB2);
 
     let mut uvw_pwm = ComplementaryPwm::new(
         p.TIM1,
@@ -66,10 +104,6 @@ async fn main(_spawner: Spawner) {
     uvw_pwm.disable(Channel::Ch3);
     uvw_pwm.set_dead_time(1);
 
-    uvw_pwm.enable(Channel::Ch1);
-    uvw_pwm.enable(Channel::Ch2);
-    uvw_pwm.enable(Channel::Ch3);
-
     let mut angle = 0.0f32;
     let max_duty = 99u16;
     let mut angular_velocity = 0.01f32; // 初期角速度（ラジアン/ループ）
@@ -99,7 +133,8 @@ async fn main(_spawner: Spawner) {
 
         // 角度更新
         angle += angular_velocity;
-        if angle >= 6.283185 { // 2π
+        if angle >= 6.283185 {
+            // 2π
             angle -= 6.283185;
         }
 
