@@ -12,7 +12,7 @@ use fmt::*;
 
 use embassy_executor::Spawner;
 use embassy_stm32::{
-    adc::{Adc, AdcChannel},
+    adc::{Adc, AdcChannel, SampleTime},
     gpio::{Level, Output, Speed},
     opamp::{OpAmp, OpAmpSpeed},
     time::Hertz,
@@ -90,18 +90,20 @@ async fn main(spawner: Spawner) {
     spawner.spawn(led_task(led1, led2, led3)).unwrap();
 
     let mut adc1 = Adc::new(p.ADC1);
+    adc1.set_sample_time(SampleTime::CYCLES640_5);
     let mut adc2 = Adc::new(p.ADC2);
+    adc2.set_sample_time(SampleTime::CYCLES640_5);
 
-    let mut op1 = OpAmp::new(p.OPAMP1, OpAmpSpeed::Normal);
-    let op1_sa = op1.standalone_int(p.PA1, p.PA3);
+    let mut op1 = OpAmp::new(p.OPAMP1, OpAmpSpeed::HighSpeed);
+    let op1_sa = op1.pga_ext(p.PA1, p.PA2, embassy_stm32::opamp::OpAmpGain::Mul4);
     let mut op1_adc_ch = op1_sa.degrade_adc();
 
     let mut op2 = OpAmp::new(p.OPAMP2, OpAmpSpeed::Normal);
-    let op2_sa = op2.standalone_int(p.PA7, p.PC5);
+    let op2_sa = op2.standalone_ext(p.PA7, p.PC5, p.PA6);
     let mut op2_adc_ch = op2_sa.degrade_adc();
 
     let mut op3 = OpAmp::new(p.OPAMP3, OpAmpSpeed::Normal);
-    let op3_sa = op3.standalone_int(p.PB0, p.PB2);
+    let op3_sa = op3.standalone_ext(p.PB0, p.PB2, p.PB1);
     let mut op3_adc_ch = op3_sa.degrade_adc();
 
     let mut uvw_pwm = ComplementaryPwm::new(
