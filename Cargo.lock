@@ -545,6 +545,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embassy-time-queue-utils",
+ "embedded-can",
  "libm",
  "panic-halt",
  "panic-probe",

@@ -16,6 +16,7 @@ embassy-sync = "0.7.2"
 embassy-time = { version = "0.5.0", features = ["tick-hz-32_768"] }
 embassy-stm32 = { version = "0.4.0", features = ["stm32g431vb", "defmt", "unstable-pac", "memory-x", "time-driver-any"] }
 embassy-time-queue-utils = "0.3.0"
+embedded-can = "0.4"
 panic-halt = "1.0.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
 libm = "0.2.15"
