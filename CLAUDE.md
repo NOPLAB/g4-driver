@@ -60,9 +60,11 @@ cargo fmt
 - **制御周期**: 1kHz（1000μs）
 - **最大電圧**: 24V
 - **DCバス電圧**: 24V
-- **最大Duty比**: 100
+- **最大Duty比**: 100（PWM範囲：0=0%, 100=100%）
 - **速度フィルタ係数**: 0.2（Hallセンサ用ローパスフィルタ）
-- **デフォルトPI ゲイン**: Kp=0.1、Ki=0.01
+- **デフォルトPI ゲイン**: Kp=0.5、Ki=0.05（応答性向上のため増加）
+- **Hall角度オフセット**: 0度（ハードウェアに応じて調整可能）
+- **最小q軸電圧**: 0.5V（静止摩擦克服用）
 
 ## ソフトウェア構造
 
@@ -76,20 +78,24 @@ cargo fmt
 #### 1. led_task ([main.rs:146-168](src/main.rs#L146-L168))
 3つのLEDを500msごとに順次点灯（動作確認用）
 
-#### 2. motor_control_task ([main.rs:170-298](src/main.rs#L170-L298))
-**1kHz FOC制御ループ** - BLDCモーターのField Oriented Control
+#### 2. motor_control_task ([main.rs:180-410](src/main.rs#L180-L410))
+**1kHz FOC制御ループ** - BLDCモーターのField Oriented Control（オープンループ始動付き）
 1. モーター使能チェック（無効時はPWM停止、PIリセット）
 2. Hallセンサ読み取り（PB6/7/8 → 3ビット状態）
-3. 電気角・速度推定（HallSensor::update）
-4. PIゲイン更新チェック（CAN経由で変更された場合）
-5. 目標速度取得（CAN経由で設定）
-6. 速度PI制御（q軸電圧指令生成、d軸は0）
-7. 電圧ベクトル制限（円形リミッタ）
-8. Park逆変換（dq → αβ座標）
-9. SVPWM計算（αβ → UVW Duty比）
-10. PWM出力（TIM1への設定）
-11. ステータス更新（CAN送信用）
-12. デバッグログ（1秒ごと）
+3. 電気角・速度推定（HallSensor::update + オフセット適用）
+4. **制御モード分岐**:
+   - **OpenLoop**: 6ステップ駆動（台形波）で始動、目標RPM到達でFOCに切替
+   - **ClosedLoopFoc**: 以下のFOC制御ループ
+5. PIゲイン更新チェック（CAN経由で変更された場合）
+6. 目標速度取得（CAN経由で設定）
+7. 速度PI制御（q軸電圧指令生成、d軸は0）
+8. 最小電圧適用（静止摩擦克服用、速度誤差>10RPMの場合）
+9. 電圧ベクトル制限（円形リミッタ）
+10. Park逆変換（dq → αβ座標）
+11. SVPWM計算（αβ → UVW Duty比）
+12. PWM出力（TIM1への設定）
+13. ステータス更新（CAN送信用）
+14. デバッグログ（1秒ごと）
 
 #### 3. can_task ([main.rs:63-144](src/main.rs#L63-L144))
 **CAN通信タスク** - モーター制御コマンド受信とステータス送信
@@ -103,7 +109,8 @@ cargo fmt
 ### FOCモジュール（[src/foc.rs](src/foc.rs)）
 
 #### HallSensor ([src/foc/hall_sensor.rs](src/foc/hall_sensor.rs))
-- Hall状態（1-6）から電気角推定（60度刻みの6セクター）
+- Hall状態（1-6）から電気角推定（セクター中心：30, 90, 150, 210, 270, 330度）
+  - **重要**: セクターの中心角を使用することでFOC制御の精度向上
 - Hall エッジ検出による速度計算（RPM）
 - ローパスフィルタによる速度平滑化
 - タイムアウト検出（1秒間エッジなし → 速度0）
@@ -118,6 +125,8 @@ cargo fmt
 - Space Vector PWM生成（正弦波PWMより15%電圧利用率向上）
 - セクター判定（1-6）とデューティ比計算
 - ゼロベクトル時間の均等配分
+- **ゼロ電圧時の特別処理**: magnitude=0の場合、中心値(50%)を返す
+  - 3相が同じDuty比(50%)の時、相間電圧=0V（モーター停止状態）
 - `calculate_sinusoidal_pwm()` も実装（シンプル版）
 
 #### Transforms ([src/foc/transforms.rs](src/foc/transforms.rs))
