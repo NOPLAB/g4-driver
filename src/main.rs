@@ -35,7 +35,7 @@ use can_protocol::{
     can_ids, encode_status, parse_enable_command, parse_pi_gains, parse_speed_command, MotorStatus,
 };
 use embedded_can::{Id, StandardId};
-use foc::{calculate_svpwm, inverse_park, limit_voltage, HallSensor, PiController};
+use foc::{calculate_svpwm, inverse_park, limit_voltage, ControlMode, HallSensor, OpenLoopRampUp, PiController};
 
 // CANの割り込みをバインド
 bind_interrupts!(struct Irqs {
@@ -52,6 +52,12 @@ const POLE_PAIRS: u8 = 6; // 極対数（ポール数12 / 2 = 6）
 const CONTROL_PERIOD_US: u64 = 1000; // 1kHz = 1000μs (1ms)
 const MAX_DUTY: u16 = 100;
 const SPEED_FILTER_ALPHA: f32 = 0.2; // ホールセンサ速度フィルタ係数
+
+// オープンループ始動パラメータ
+const OPENLOOP_INITIAL_RPM: f32 = 50.0; // 初期回転数 [RPM]
+const OPENLOOP_TARGET_RPM: f32 = 150.0; // FOC切替回転数 [RPM]
+const OPENLOOP_ACCELERATION_RPM_PER_S: f32 = 100.0; // 加速度 [RPM/s]
+const OPENLOOP_VOLTAGE: f32 = 3.0; // オープンループ出力電圧 [V]
 
 // 共有状態（Mutexで保護）
 static TARGET_SPEED: Mutex<ThreadModeRawMutex, f32> = Mutex::new(0.0);
@@ -167,7 +173,7 @@ pub async fn led_task(
     }
 }
 
-// モーター制御タスク（5kHz FOCループ）
+// モーター制御タスク（1kHz FOCループ + オープンループ始動）
 #[embassy_executor::task]
 pub async fn motor_control_task(
     hall_h1: Input<'static>,
@@ -183,6 +189,18 @@ pub async fn motor_control_task(
     // 速度PIコントローラ初期化
     let mut speed_pi = PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, MAX_VOLTAGE);
 
+    // オープンループランプアップ初期化
+    let mut open_loop = OpenLoopRampUp::new(
+        OPENLOOP_INITIAL_RPM,
+        OPENLOOP_TARGET_RPM,
+        OPENLOOP_ACCELERATION_RPM_PER_S,
+        OPENLOOP_VOLTAGE,
+        POLE_PAIRS,
+    );
+
+    // 制御モード（初期はオープンループ）
+    let mut control_mode = ControlMode::OpenLoop;
+
     // 制御周期
     let dt = CONTROL_PERIOD_US as f32 / 1_000_000.0; // 秒に変換
 
@@ -191,6 +209,10 @@ pub async fn motor_control_task(
         POLE_PAIRS,
         1_000_000 / CONTROL_PERIOD_US,
         dt
+    );
+    info!(
+        "OpenLoop startup: Initial={}RPM, Target={}RPM, Accel={}RPM/s, V={}V",
+        OPENLOOP_INITIAL_RPM, OPENLOOP_TARGET_RPM, OPENLOOP_ACCELERATION_RPM_PER_S, OPENLOOP_VOLTAGE
     );
 
     // モーター有効状態の追跡（PWMチャネル制御用）
@@ -204,6 +226,8 @@ pub async fn motor_control_task(
             if was_enabled {
                 info!("Motor control loop: Disabling PWM channels");
                 was_enabled = false;
+                // 制御モードをオープンループに戻す
+                control_mode = ControlMode::OpenLoop;
             }
 
             // モーター停止：PWMチャネルを完全無効化
@@ -216,9 +240,10 @@ pub async fn motor_control_task(
             uvw_pwm.set_duty(Channel::Ch2, 0);
             uvw_pwm.set_duty(Channel::Ch3, 0);
 
-            // PIコントローラをリセット
+            // 各コントローラをリセット
             speed_pi.reset();
             hall_sensor.reset();
+            open_loop.reset();
 
             Timer::after(Duration::from_micros(CONTROL_PERIOD_US)).await;
             continue;
@@ -226,7 +251,7 @@ pub async fn motor_control_task(
 
         // モーター有効化時の処理
         if !was_enabled {
-            info!("Motor control loop: Enabling PWM channels");
+            info!("Motor control loop: Starting with OpenLoop mode");
             uvw_pwm.enable(Channel::Ch1);
             uvw_pwm.enable(Channel::Ch2);
             uvw_pwm.enable(Channel::Ch3);
@@ -239,57 +264,96 @@ pub async fn motor_control_task(
         let h3 = hall_h3.is_high();
         let hall_state = (h3 as u8) << 2 | (h2 as u8) << 1 | (h1 as u8);
 
-        // 3. 電気角・速度推定
-        let (electrical_angle, speed_rpm) = hall_sensor.update(hall_state, dt);
+        // 3. 電気角・速度推定（FOCモードで使用）
+        let (hall_electrical_angle, speed_rpm) = hall_sensor.update(hall_state, dt);
 
-        // 4. PIゲイン更新チェック（非同期で更新された場合）
-        {
-            let (kp, ki) = *SPEED_PI_GAINS.lock().await;
-            if kp != speed_pi.get_kp() || ki != speed_pi.get_ki() {
-                speed_pi.set_gains(kp, ki);
-                info!("PI gains updated: Kp={}, Ki={}", kp, ki);
+        // 4. 制御モードに応じた処理
+        let (electrical_angle, vd, vq) = match control_mode {
+            ControlMode::OpenLoop => {
+                // オープンループ強制転流
+                let (angle, voltage) = open_loop.update(dt);
+                let openloop_rpm = open_loop.get_current_rpm(POLE_PAIRS);
+
+                // しきい値速度に達したらFOCモードに切り替え
+                if open_loop.is_target_reached() {
+                    info!(
+                        "Switching to FOC mode: OpenLoop reached {}RPM",
+                        openloop_rpm
+                    );
+                    control_mode = ControlMode::ClosedLoopFoc;
+                    // ホールセンサの角度をオープンループの角度で初期化
+                    // （必要に応じて実装）
+                }
+
+                (angle, 0.0, voltage)
             }
-        }
+            ControlMode::ClosedLoopFoc => {
+                // クローズドループFOC制御
 
-        // 5. 目標速度取得
-        let target_speed = *TARGET_SPEED.lock().await;
+                // PIゲイン更新チェック（非同期で更新された場合）
+                {
+                    let (kp, ki) = *SPEED_PI_GAINS.lock().await;
+                    if kp != speed_pi.get_kp() || ki != speed_pi.get_ki() {
+                        speed_pi.set_gains(kp, ki);
+                        info!("PI gains updated: Kp={}, Ki={}", kp, ki);
+                    }
+                }
 
-        // 6. 速度PI制御（q軸電圧指令生成）
-        let vq = speed_pi.update(target_speed, speed_rpm, dt);
-        let vd = 0.0; // SPMSM: d軸電流/電圧は0
+                // 目標速度取得
+                let target_speed = *TARGET_SPEED.lock().await;
 
-        // 7. 電圧ベクトル制限
+                // 速度PI制御（q軸電圧指令生成）
+                let vq_cmd = speed_pi.update(target_speed, speed_rpm, dt);
+                let vd_cmd = 0.0; // SPMSM: d軸電流/電圧は0
+
+                (hall_electrical_angle, vd_cmd, vq_cmd)
+            }
+        };
+
+        // 5. 電圧ベクトル制限
         let (vd_limited, vq_limited) = limit_voltage(vd, vq, MAX_VOLTAGE);
 
-        // 8. Park逆変換（dq → αβ）
+        // 6. Park逆変換（dq → αβ）
         let (v_alpha, v_beta) = inverse_park(vd_limited, vq_limited, electrical_angle);
 
-        // 9. SVPWM計算
+        // 7. SVPWM計算
         let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, V_DC_BUS, MAX_DUTY);
 
-        // 10. PWM出力
+        // 8. PWM出力
         uvw_pwm.set_duty(Channel::Ch1, duty_u);
         uvw_pwm.set_duty(Channel::Ch2, duty_v);
         uvw_pwm.set_duty(Channel::Ch3, duty_w);
 
-        // 11. ステータス更新（CAN送信用）
+        // 9. ステータス更新（CAN送信用）
         {
             let mut status = MOTOR_STATUS.lock().await;
             status.speed_rpm = speed_rpm;
             status.electrical_angle = electrical_angle;
         }
 
-        // 12. デバッグログ（低頻度）
+        // 10. デバッグログ（低頻度）
         static mut LOG_COUNTER: u32 = 0;
         unsafe {
             LOG_COUNTER += 1;
             if LOG_COUNTER >= 1000 {
                 // 1秒ごと（1kHz / 1000 = 1Hz）
                 LOG_COUNTER = 0;
-                debug!(
-                    "Speed: {}/{} RPM, Vq: {}V, Angle: {}rad, Hall: {}",
-                    speed_rpm, target_speed, vq_limited, electrical_angle, hall_state
-                );
+                match control_mode {
+                    ControlMode::OpenLoop => {
+                        let openloop_rpm = open_loop.get_current_rpm(POLE_PAIRS);
+                        debug!(
+                            "[OpenLoop] RPM: {}, Angle: {}rad, Vq: {}V",
+                            openloop_rpm, electrical_angle, vq_limited
+                        );
+                    }
+                    ControlMode::ClosedLoopFoc => {
+                        let target_speed = *TARGET_SPEED.lock().await;
+                        debug!(
+                            "[FOC] Speed: {}/{} RPM, Vq: {}V, Angle: {}rad, Hall: {}",
+                            speed_rpm, target_speed, vq_limited, electrical_angle, hall_state
+                        );
+                    }
+                }
             }
         }
 
