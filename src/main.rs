@@ -49,7 +49,7 @@ const DEFAULT_SPEED_KI: f32 = 0.01;
 const MAX_VOLTAGE: f32 = 24.0; // V
 const V_DC_BUS: f32 = 24.0; // V (DC bus voltage)
 const POLE_PAIRS: u8 = 6; // 極対数（ポール数12 / 2 = 6）
-const CONTROL_PERIOD_US: u64 = 200; // 5kHz = 200μs
+const CONTROL_PERIOD_US: u64 = 1000; // 1kHz = 1000μs (1ms)
 const MAX_DUTY: u16 = 100;
 const SPEED_FILTER_ALPHA: f32 = 0.2; // ホールセンサ速度フィルタ係数
 
@@ -101,6 +101,11 @@ pub async fn can_task(can: can::Can<'static>) {
                             can_ids::ENABLE_CMD => {
                                 if let Some(enable) = parse_enable_command(data) {
                                     *MOTOR_ENABLE.lock().await = enable;
+                                    if enable {
+                                        info!("Motor ENABLED via CAN");
+                                    } else {
+                                        info!("Motor DISABLED via CAN");
+                                    }
                                 }
                             }
                             can_ids::EMERGENCY_STOP => {
@@ -188,11 +193,25 @@ pub async fn motor_control_task(
         dt
     );
 
+    // モーター有効状態の追跡（PWMチャネル制御用）
+    let mut was_enabled = false;
+
     loop {
         // 1. モーター使能チェック
         let motor_enabled = *MOTOR_ENABLE.lock().await;
         if !motor_enabled {
-            // モーター停止：全相0% duty
+            // 状態が変化した場合のみログとPWM停止処理
+            if was_enabled {
+                info!("Motor control loop: Disabling PWM channels");
+                was_enabled = false;
+            }
+
+            // モーター停止：PWMチャネルを完全無効化
+            uvw_pwm.disable(Channel::Ch1);
+            uvw_pwm.disable(Channel::Ch2);
+            uvw_pwm.disable(Channel::Ch3);
+
+            // Duty比も0にセット
             uvw_pwm.set_duty(Channel::Ch1, 0);
             uvw_pwm.set_duty(Channel::Ch2, 0);
             uvw_pwm.set_duty(Channel::Ch3, 0);
@@ -203,6 +222,15 @@ pub async fn motor_control_task(
 
             Timer::after(Duration::from_micros(CONTROL_PERIOD_US)).await;
             continue;
+        }
+
+        // モーター有効化時の処理
+        if !was_enabled {
+            info!("Motor control loop: Enabling PWM channels");
+            uvw_pwm.enable(Channel::Ch1);
+            uvw_pwm.enable(Channel::Ch2);
+            uvw_pwm.enable(Channel::Ch3);
+            was_enabled = true;
         }
 
         // 2. ホールセンサ読み取り（PB6=H1, PB7=H2, PB8=H3）
@@ -255,8 +283,8 @@ pub async fn motor_control_task(
         static mut LOG_COUNTER: u32 = 0;
         unsafe {
             LOG_COUNTER += 1;
-            if LOG_COUNTER >= 5000 {
-                // 1秒ごと（5kHz / 5000 = 1Hz）
+            if LOG_COUNTER >= 1000 {
+                // 1秒ごと（1kHz / 1000 = 1Hz）
                 LOG_COUNTER = 0;
                 debug!(
                     "Speed: {}/{} RPM, Vq: {}V, Angle: {}rad, Hall: {}",
