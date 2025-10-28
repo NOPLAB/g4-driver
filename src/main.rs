@@ -13,8 +13,10 @@ use fmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::{
     adc::{Adc, AdcChannel, SampleTime},
+    bind_interrupts, can,
     gpio::{Level, Output, Speed},
     opamp::{OpAmp, OpAmpSpeed},
+    peripherals,
     time::Hertz,
     timer::{
         complementary_pwm::{ComplementaryPwm, ComplementaryPwmPin},
@@ -25,6 +27,51 @@ use embassy_stm32::{
 };
 use embassy_time::{Duration, Timer};
 use libm::sin;
+
+// CANの割り込みをバインド
+bind_interrupts!(struct Irqs {
+    FDCAN1_IT0 => can::IT0InterruptHandler<peripherals::FDCAN1>;
+    FDCAN1_IT1 => can::IT1InterruptHandler<peripherals::FDCAN1>;
+});
+
+// CAN通信タスク - エコーバック実装
+#[embassy_executor::task]
+pub async fn can_task(can: can::Can<'static>) {
+    let (mut tx, mut rx, _properties) = can.split();
+
+    info!("CAN echo task started");
+
+    loop {
+        // フレームの受信を待機
+        match rx.read().await {
+            Ok(envelope) => {
+                let frame = envelope.frame;
+
+                // 受信したフレームの情報をログ出力
+                info!(
+                    "CAN RX: DLC={}, Data={:?}",
+                    frame.data().len(),
+                    frame.data()
+                );
+
+                // 受信したフレームをそのまま送り返す
+                match tx.write(&frame).await {
+                    Some(_old_frame) => {
+                        // 送信キューが満杯で、古いフレームが返された場合
+                        info!("CAN TX: Queue full, echo dropped");
+                    }
+                    None => {
+                        // 正常に送信キューに追加された
+                        info!("CAN TX: Echo sent");
+                    }
+                }
+            }
+            Err(e) => {
+                info!("CAN RX Error: {:?}", e);
+            }
+        }
+    }
+}
 
 #[embassy_executor::task]
 pub async fn led_task(
@@ -63,21 +110,26 @@ async fn main(spawner: Spawner) {
         use embassy_stm32::rcc::PllRDiv;
         use embassy_stm32::rcc::PllSource;
 
+        use embassy_stm32::rcc::Sysclk;
+
         config.rcc.hsi = true;
         config.rcc.pll = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
             mul: PllMul::MUL85,
             divp: None,
-            divq: None,
+            divq: Some(embassy_stm32::rcc::PllQDiv::DIV2), // FDCANクロック用に追加
             divr: Some(PllRDiv::DIV2),
         });
+        config.rcc.sys = Sysclk::PLL1_R; // システムクロックをPLLに設定
 
         use embassy_stm32::rcc::mux::Adcsel;
         use embassy_stm32::rcc::mux::ClockMux;
+        use embassy_stm32::rcc::mux::Fdcansel;
 
         let mut clock_mux = ClockMux::default();
         clock_mux.adc12sel = Adcsel::SYS;
+        clock_mux.fdcansel = Fdcansel::PLL1_Q; // FDCANクロックをPLL1_Qに設定
         config.rcc.mux = clock_mux;
     }
 
@@ -88,6 +140,31 @@ async fn main(spawner: Spawner) {
     let led3 = Output::new(p.PC15, Level::High, Speed::Low);
 
     spawner.spawn(led_task(led1, led2, led3)).unwrap();
+
+    // CAN初期化（RX=PA11, TX=PA12）
+    // ビットレートは250kbpsに設定
+    let mut can_configurator = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
+
+    // すべての拡張IDフレームをFIFO1に受信
+    can_configurator.properties().set_extended_filter(
+        can::filter::ExtendedFilterSlot::_0,
+        can::filter::ExtendedFilter::accept_all_into_fifo1(),
+    );
+
+    // すべての標準IDフレームをFIFO0に受信
+    can_configurator.properties().set_standard_filter(
+        can::filter::StandardFilterSlot::_0,
+        can::filter::StandardFilter::accept_all_into_fifo0(),
+    );
+
+    // ビットレート設定: 250kbps
+    // 他の一般的な速度: 125kbps, 500kbps, 1000kbps
+    can_configurator.set_bitrate(250_000);
+
+    // CAN通信を開始（通常動作モード）
+    let can = can_configurator.start(can::OperatingMode::NormalOperationMode);
+
+    spawner.spawn(can_task(can)).unwrap();
 
     let mut adc1 = Adc::new(p.ADC1);
     adc1.set_sample_time(SampleTime::CYCLES640_5);
