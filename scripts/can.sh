@@ -31,17 +31,64 @@ hex_to_f32() {
     python3 -c "import struct; print(struct.unpack('<f', bytes.fromhex('$1'))[0])"
 }
 
-# Check if CAN interface is up
-check_interface() {
+# Setup and check CAN interface
+setup_interface() {
+    # Check if interface exists
     if ! ip link show "$CAN_INTERFACE" &> /dev/null; then
-        echo -e "${RED}Error: CAN interface $CAN_INTERFACE not found${NC}"
-        exit 1
+        echo -e "${YELLOW}CAN interface $CAN_INTERFACE not found, attempting to set up...${NC}"
+
+        # Try to setup slcan interface
+        if [[ "$CAN_INTERFACE" == slcan* ]]; then
+            # Look for USB serial device (common for slcan adapters)
+            local serial_device=""
+            for dev in /dev/ttyACM* /dev/ttyUSB*; do
+                if [ -e "$dev" ]; then
+                    serial_device="$dev"
+                    break
+                fi
+            done
+
+            if [ -z "$serial_device" ]; then
+                echo -e "${RED}Error: No USB serial device found (/dev/ttyACM* or /dev/ttyUSB*)${NC}"
+                echo "Please connect your CAN adapter and try again"
+                exit 1
+            fi
+
+            echo -e "${BLUE}Found serial device: $serial_device${NC}"
+            echo -e "${BLUE}Setting up slcan interface...${NC}"
+
+            # Setup slcan (S6 = 250kbps)
+            sudo slcand -o -c -s6 "$serial_device" "$CAN_INTERFACE" || {
+                echo -e "${RED}Error: Failed to setup slcan interface${NC}"
+                echo "Try: sudo slcand -o -c -s6 $serial_device $CAN_INTERFACE"
+                exit 1
+            }
+
+            sleep 1
+            echo -e "${GREEN}slcan interface created successfully${NC}"
+        else
+            # For hardware CAN interfaces (can0, can1, etc.)
+            echo -e "${RED}Error: CAN interface $CAN_INTERFACE not found${NC}"
+            echo "For hardware CAN interfaces, please ensure the device tree or kernel module is loaded"
+            exit 1
+        fi
     fi
 
+    # Check if interface is UP
     if ! ip link show "$CAN_INTERFACE" | grep -q "UP"; then
-        echo -e "${YELLOW}Warning: CAN interface $CAN_INTERFACE is DOWN${NC}"
-        echo "Try: sudo ip link set $CAN_INTERFACE up"
-        exit 1
+        echo -e "${YELLOW}CAN interface $CAN_INTERFACE is DOWN, bringing it up...${NC}"
+
+        # Try to bring up the interface
+        sudo ip link set "$CAN_INTERFACE" up || {
+            echo -e "${RED}Error: Failed to bring up $CAN_INTERFACE${NC}"
+            echo "Try manually: sudo ip link set $CAN_INTERFACE up"
+            exit 1
+        }
+
+        sleep 0.5
+        echo -e "${GREEN}CAN interface $CAN_INTERFACE is now UP${NC}"
+    else
+        echo -e "${GREEN}CAN interface $CAN_INTERFACE is ready${NC}"
     fi
 }
 
@@ -205,7 +252,7 @@ usage() {
 }
 
 # Main
-check_interface
+setup_interface
 
 case "${1:-}" in
     speed)
