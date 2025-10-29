@@ -1,31 +1,6 @@
-# This file was automatically generated.
-
-[package]
-edition = "2021"
-name = "g4-driver"
-version = "0.1.0"
-
-[dependencies]
-cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
-cortex-m-rt = "0.7.5"
-defmt = { version = "1.0.1", optional = true }
-defmt-rtt = { version = "1.0.0", optional = true }
-embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
-embassy-futures = "0.1.2"
-embassy-sync = "0.7.2"
-embassy-time = { version = "0.5.0", features = ["tick-hz-32_768"] }
-embassy-stm32 = { version = "0.4.0", features = ["stm32g431vb", "defmt", "unstable-pac", "memory-x", "time-driver-any", "exti"] }
-embassy-time-queue-utils = "0.3.0"
-embedded-can = "0.4"
-panic-halt = "1.0.0"
-panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
-libm = "0.2.15"
-idsp = { version = "0.19.0", default-features = false }
-
-[[bin]]
-name = "g4-driver"
-test = false
-bench = false
+[workspace]
+resolver = "2"
+members = ["firmware"]
 
 [profile.dev]
 debug = true
@@ -38,20 +13,3 @@ debug = false
 lto = true
 opt-level = 2
 incremental = true
-
-[features]
-defmt = ["dep:defmt"]
-defmt-rtt = ["dep:defmt-rtt"]
-panic-probe = ["dep:panic-probe"]
-default = ["debug"]
-debug = [
-    "defmt",
-    "defmt-rtt",
-    "panic-probe",
-    "embassy-executor/defmt",
-    "embassy-sync/defmt",
-    "embassy-futures/defmt",
-    "embassy-time/defmt",
-    "embassy-time/defmt-timestamp-uptime",
-    "embassy-stm32/defmt",
-]

@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 STM32G431VBTxマイコンを使用したBLDCモータードライバー。Hall センサベースの FOC（Field Oriented Control）実装で、CAN 通信によるモーター制御を行う Embassy 非同期フレームワークベースの組み込み Rust プロジェクトです。
 
+**Cargoワークスペース構造**: プロジェクトはワークスペースとして構成されています。ファームウェアコードは `firmware/` サブディレクトリに配置され、将来的に他のクレート（シミュレーター、テストユーティリティなど）を追加できる拡張性のある構造になっています。
+
 ## 開発コマンド
 
 ### ビルドとフラッシュ
@@ -68,6 +70,25 @@ cargo fmt
 
 ## ソフトウェア構造
 
+### モジュール構成
+プロジェクトは以下のモジュールで構成されています：
+
+- **[firmware/src/main.rs](firmware/src/main.rs)** - メインエントリーポイント、ハードウェア初期化、タスク起動
+- **[firmware/src/config.rs](firmware/src/config.rs)** - 全設定パラメータの集約（モーター、PWM、CAN、オープンループ等）
+- **[firmware/src/state.rs](firmware/src/state.rs)** - グローバル共有状態（Mutex保護）
+- **[firmware/src/hardware.rs](firmware/src/hardware.rs)** - ハードウェア初期化ロジック（クロック設定、割り込み設定等）
+- **[firmware/src/hall_tim.rs](firmware/src/hall_tim.rs)** - TIM4ハードウェアHallセンサーインターフェース（XORモード）
+- **[firmware/src/benchmark.rs](firmware/src/benchmark.rs)** - FOC関数のパフォーマンス測定
+- **[firmware/src/voltage_monitor.rs](firmware/src/voltage_monitor.rs)** - DCバス電圧監視モジュール
+- **[firmware/src/tasks/](firmware/src/tasks/)** - 非同期タスク実装
+  - [led.rs](firmware/src/tasks/led.rs) - LED点滅タスク
+  - [can.rs](firmware/src/tasks/can.rs) - CAN通信タスク
+  - [motor_control.rs](firmware/src/tasks/motor_control.rs) - モーター制御タスク
+  - [voltage_monitor.rs](firmware/src/tasks/voltage_monitor.rs) - 電圧監視タスク
+- **[firmware/src/foc/](firmware/src/foc/)** - FOC制御アルゴリズム実装
+- **[firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)** - CANプロトコル定義とパーサー
+- **[firmware/src/fmt.rs](firmware/src/fmt.rs)** - ログマクロ（defmt/core切り替え）
+
 ### Embassy非同期ランタイム
 - `#[embassy_executor::main]` でメインループ
 - `#[embassy_executor::task]` で非同期タスク生成
@@ -75,29 +96,30 @@ cargo fmt
 
 ### 主要タスク
 
-#### 1. led_task ([main.rs:146-168](src/main.rs#L146-L168))
+#### 1. led_task ([firmware/src/tasks/led.rs](firmware/src/tasks/led.rs))
 3つのLEDを500msごとに順次点灯（動作確認用）
 
-#### 2. motor_control_task ([main.rs:180-410](src/main.rs#L180-L410))
-**1kHz FOC制御ループ** - BLDCモーターのField Oriented Control（オープンループ始動付き）
+#### 2. motor_control_task ([firmware/src/tasks/motor_control.rs](firmware/src/tasks/motor_control.rs))
+**2.5kHz FOC制御ループ** - BLDCモーターのField Oriented Control（オープンループ始動付き）
 1. モーター使能チェック（無効時はPWM停止、PIリセット）
-2. Hallセンサ読み取り（PB6/7/8 → 3ビット状態）
-3. 電気角・速度推定（HallSensor::update + オフセット適用）
-4. **制御モード分岐**:
+2. TIM4ハードウェアからHallセンサ状態取得（hall_tim::get_hall_state()）
+3. 周期・速度計算（hall_tim::get_period_cycles() → calculate_speed_rpm()）
+4. 電気角推定（HallSensor::update + オフセット適用）
+5. **制御モード分岐**:
    - **OpenLoop**: 6ステップ駆動（台形波）で始動、目標RPM到達でFOCに切替
    - **ClosedLoopFoc**: 以下のFOC制御ループ
-5. PIゲイン更新チェック（CAN経由で変更された場合）
-6. 目標速度取得（CAN経由で設定）
-7. 速度PI制御（q軸電圧指令生成、d軸は0）
-8. 最小電圧適用（静止摩擦克服用、速度誤差>10RPMの場合）
-9. 電圧ベクトル制限（円形リミッタ）
-10. Park逆変換（dq → αβ座標）
-11. SVPWM計算（αβ → UVW Duty比）
-12. PWM出力（TIM1への設定）
-13. ステータス更新（CAN送信用）
-14. デバッグログ（1秒ごと）
+6. PIゲイン更新チェック（CAN経由で変更された場合）
+7. 目標速度取得（CAN経由で設定）
+8. 速度PI制御（q軸電圧指令生成、d軸は0）
+9. 最小電圧適用（静止摩擦克服用、速度誤差>10RPMの場合）
+10. 電圧ベクトル制限（円形リミッタ）
+11. Park逆変換（dq → αβ座標）
+12. SVPWM計算（αβ → UVW Duty比）
+13. PWM出力（TIM1への設定）
+14. ステータス更新（CAN送信用）
+15. デバッグログ（1秒ごと）
 
-#### 3. can_task ([main.rs:63-144](src/main.rs#L63-L144))
+#### 3. can_task ([firmware/src/tasks/can.rs](firmware/src/tasks/can.rs))
 **CAN通信タスク** - モーター制御コマンド受信とステータス送信
 - 100ms周期でステータス送信（ID 0x200: 速度RPM + 電気角）
 - コマンド受信処理：
@@ -106,9 +128,17 @@ cargo fmt
   - `0x102`: モーター使能（u8: 0=無効、1=有効）
   - `0x000`: 緊急停止（即座にモーター停止、速度0）
 
-### FOCモジュール（[src/foc.rs](src/foc.rs)）
+#### 4. voltage_monitor_task ([firmware/src/tasks/voltage_monitor.rs](firmware/src/tasks/voltage_monitor.rs))
+**電圧監視タスク** - DCバス電圧の監視と保護
+- PC1ピン（ADC2_IN7）でDCバス電圧を監視
+- 分圧回路（100kΩ + 10kΩ）で最大36.3V測定可能
+- ローパスフィルタで電圧平滑化（α=0.1）
+- 過電圧（>30V）/低電圧（<10V）検出
+- ステータスをstate::VOLTAGE_STATEに更新（CAN送信用）
 
-#### HallSensor ([src/foc/hall_sensor.rs](src/foc/hall_sensor.rs))
+### FOCモジュール（[firmware/src/foc.rs](firmware/src/foc.rs)）
+
+#### HallSensor ([firmware/src/foc/hall_sensor.rs](firmware/src/foc/hall_sensor.rs))
 - Hall状態（1-6）から電気角推定（セクター中心：30, 90, 150, 210, 270, 330度）
   - **重要**: セクターの中心角を使用することでFOC制御の精度向上
 - **角度補間機能**（デフォルト有効）：
@@ -119,7 +149,7 @@ cargo fmt
 - ローパスフィルタによる速度平滑化
 - タイムアウト検出（1秒間エッジなし → 速度0）
 
-#### PiController ([src/foc/pi_controller.rs](src/foc/pi_controller.rs))
+#### PiController ([firmware/src/foc/pi_controller.rs](firmware/src/foc/pi_controller.rs))
 - 比例・積分制御（anti-windup機能付き）
 - **積分項計算**: `integral += ki * error * dt` 形式（[calebfletcher/foc](https://github.com/calebfletcher/foc)実装準拠）
   - 数値安定性向上
@@ -131,7 +161,7 @@ cargo fmt
 - ゲイン・リミット動的変更可能
 - `new_symmetric()` で±リミット設定
 
-#### SVPWM ([src/foc/svpwm.rs](src/foc/svpwm.rs))
+#### SVPWM ([firmware/src/foc/svpwm.rs](firmware/src/foc/svpwm.rs))
 - **高速x/y/z座標変換方式**（[calebfletcher/foc](https://github.com/calebfletcher/foc)実装準拠）
   - 三角関数（`atan2f`, `sinf`）を使わず、符号判定でセクター決定
   - 計算負荷を大幅削減（組み込み最適化）
@@ -140,30 +170,68 @@ cargo fmt
 - セクター判定（1-6）とデューティ比計算
 - `calculate_sinusoidal_pwm()` も実装（シンプル版、後方互換性用）
 
-#### Transforms ([src/foc/transforms.rs](src/foc/transforms.rs))
+#### Transforms ([firmware/src/foc/transforms.rs](firmware/src/foc/transforms.rs))
 - `inverse_park()`: dq → αβ座標変換（回転座標系 → 静止座標系）
 - `inverse_clarke()`: αβ → UVW 3相変換
 - `limit_voltage()`: dq電圧ベクトルの円形制限
 - `normalize_angle()`: 角度正規化（0～2π）
 
-#### OpenLoopRampUp ([src/foc.rs:15-124](src/foc.rs#L15-L124))
+#### OpenLoopRampUp ([firmware/src/foc.rs:15-124](firmware/src/foc.rs#L15-L124))
 - 始動時のオープンループ制御（強制転流）
 - 角速度のランプアップ（加速度指定）
 - 目標速度到達後にFOC制御へ移行
 - **注**: 現在のmain.rsでは未使用（将来の始動制御用）
 
-### CANプロトコル（[src/can_protocol.rs](src/can_protocol.rs)）
+### TIM4 Hallセンサーインターフェース（[firmware/src/hall_tim.rs](firmware/src/hall_tim.rs)）
+**STM32ハードウェアHall Sensor Interface Mode（XORモード）実装**
+- PB6/PB7/PB8（TIM4_CH1/CH2/CH3）でHallセンサー入力
+- 3つのHall信号をXORしてTI1に接続（自動エッジ検出）
+- Input Captureで各エッジのタイムスタンプをキャプチャ
+- CC1割り込みでエッジ間周期から速度計算
+- UPDATE割り込みでタイムアウト検出（モーター停止判定）
+- Atomic変数でロックフリー実装（割り込みハンドラ↔制御ループ間）
+- 170MHzクロック、フルスピード動作（PSC=0）
+- `get_hall_state()`: Hall状態取得（1-6）
+- `get_period_cycles()`: エッジ間サイクル数取得
+- `calculate_speed_rpm()`: 周期からRPM計算
+- `is_timeout()`: タイムアウトフラグ確認（1秒間エッジなし）
+
+**メリット**: ソフトウェアポーリング不要、マイクロ秒精度のタイムスタンプ、CPUオーバーヘッド最小化
+
+### CANプロトコル（[firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)）
 - CAN ID定義: `can_ids` モジュール
 - パース関数: `parse_speed_command()`, `parse_pi_gains()`, `parse_enable_command()`
 - エンコード関数: `encode_status()`, `decode_status()`
 - 全てリトルエンディアンf32形式
 - テストコード付き（`#[cfg(test)]`）
 
-### defmt ログマクロ（[src/fmt.rs](src/fmt.rs)）
+### Config/State/Hardware モジュール
+- **[firmware/src/config.rs](firmware/src/config.rs)**: 全設定パラメータを集約（マジックナンバー排除）
+  - モーターパラメータ（極対数、電圧、PIゲイン等）
+  - PWM設定（周波数、デッドタイム）
+  - CAN設定（ビットレート）
+  - オープンループ始動パラメータ
+- **[firmware/src/state.rs](firmware/src/state.rs)**: タスク間共有状態（Mutex保護）
+  - `TARGET_SPEED`: 目標速度 [RPM]
+  - `SPEED_PI_GAINS`: PIゲイン (Kp, Ki)
+  - `MOTOR_ENABLE`: モーター有効/無効フラグ
+  - `MOTOR_STATUS`: モーターステータス（CAN送信用）
+  - `VOLTAGE_STATE`: 電圧監視ステータス（CAN送信用）
+- **[firmware/src/hardware.rs](firmware/src/hardware.rs)**: ハードウェア初期化ロジック
+  - `create_clock_config()`: RCC/PLL設定（170MHz生成）
+  - `init_hall_sensor()`: TIM4 Hallインターフェース初期化
+  - CAN割り込みバインディング（`Irqs`）
+
+### defmt ログマクロ（[firmware/src/fmt.rs](firmware/src/fmt.rs)）
 - `defmt` フィーチャーの有無で `core` と `defmt` のマクロを切り替え
 - `trace!`、`debug!`、`info!`、`error!` などのログマクロ
 - `unwrap!`、`assert!` などのユーティリティマクロ
 - `defmt` 無効時もコンパイルエラーにならないよう互換性確保
+
+### Benchmark（[firmware/src/benchmark.rs](firmware/src/benchmark.rs)）
+- DWTサイクルカウンタを使用したパフォーマンス測定
+- `run_inverse_park_benchmark()`: inverse_park()のベンチマーク実行
+- idsp vs libm の三角関数実装比較（起動時に自動実行）
 
 ## ビルド最適化
 
@@ -182,55 +250,39 @@ cargo fmt
 - FOC制御は1kHzループで実行されるため、処理時間に注意（1ms以内に完了必要）
   - SVPWM最適化により計算負荷を削減
 
-## 最近の最適化履歴
+## 最適化履歴と設計判断
 
-### 2025-10-29: Hallセンサー処理の超高速化
-Hallセンサーのエッジ検出処理を限界まで最適化し、レイテンシを最小化：
+### TIM4ハードウェアHallセンサーインターフェース
+**STM32組み込みペリフェラルを活用した最適化**
+- ソフトウェアポーリング不要：ハードウェアが自動的に3つのHall信号をXORしてエッジ検出
+- マイクロ秒精度のタイムスタンプ：170MHzタイマーで高精度周期測定
+- CPUオーバーヘッド最小化：割り込みハンドラは数十サイクルで完了
+- Atomic変数でロックフリー実装：割り込みハンドラとFOCループ間の競合を排除
+- リアルタイム性向上：エッジ検出～速度計算のレイテンシを大幅削減
 
-1. **EXTI割り込みベースの実装**（[main.rs:204-241](src/main.rs#L204-L241)）
-   - 基本的な`Input`ポーリング（400μs周期）→ `ExtiInput`割り込みベースに変更
-   - エッジ検出のレイテンシを数マイクロ秒以下に短縮
-   - 3つのHallピン（H1, H2, H3）を`select3`で並行監視
+### FOC制御アルゴリズム最適化
+参照実装 [calebfletcher/foc](https://github.com/calebfletcher/foc) との比較により最適化：
 
-2. **Atomic変数によるロックフリー実装**（[main.rs:71-72](src/main.rs#L71-L72)）
-   - Mutex（非同期ロック）→ AtomicU8/AtomicU32に変更
-   - ロックオーバーヘッドを完全に排除（ゼロコスト抽象化）
-   - Relaxed ordering使用で最速のメモリアクセス
-   - 割り込みハンドラとメインループ間の競合なし
-
-3. **DWTサイクルカウンタ直接読み取り**（[main.rs:224](src/main.rs#L224)）
-   - `Instant::now()` → `DWT::cycle_count()`に変更
-   - Embassy時間ドライバーのオーバーヘッドを回避
-   - ナノ秒精度のタイムスタンプ（170MHzクロック）
-   - ハードウェアレジスタ直接アクセスで最速
-
-4. **高頻度ログの削除**（[main.rs:237-239](src/main.rs#L237-L239)）
-   - `trace!`ログをコメントアウト
-   - シリアル出力のオーバーヘッド排除
-   - 高速回転時のパフォーマンス低下を防止
-
-**パフォーマンス改善効果:**
-- エッジ検出レイテンシ: 400μs（ポーリング）→ 2-3μs（EXTI割り込み）
-- 状態更新オーバーヘッド: ~10μs（Mutex）→ ~50ns（Atomic）
-- タイムスタンプ精度: ±500μs → ±6ns（170MHzクロック）
-- 総処理時間: ~20μs → **<1μs**（約20倍高速化）
-
-### 2025-10-29: FOC制御アルゴリズム最適化
-参照実装 [calebfletcher/foc](https://github.com/calebfletcher/foc) との比較により、以下を最適化：
-
-1. **SVPWM実装の改善**（[svpwm.rs](src/foc/svpwm.rs)）
+1. **SVPWM実装の改善**（[firmware/src/foc/svpwm.rs](firmware/src/foc/svpwm.rs)）
    - 三角関数ベース → x/y/z座標変換+符号判定方式に変更
    - `atan2f`と`sinf`を削除、計算負荷を大幅削減
    - セクター判定がシンプルかつ高速に
    - 制御安定性が向上
 
-2. **PI制御の改善**（[pi_controller.rs](src/foc/pi_controller.rs)）
+2. **PI制御の改善**（[firmware/src/foc/pi_controller.rs](firmware/src/foc/pi_controller.rs)）
    - 積分項計算: `integral += error * dt; ki * integral` → `integral += ki * error * dt`
    - 数値安定性向上
    - ゲイン動的変更時の挙動改善
 
-3. **アンチワインドアップの修正**（[pi_controller.rs](src/foc/pi_controller.rs)）
+3. **アンチワインドアップの修正**（[firmware/src/foc/pi_controller.rs](firmware/src/foc/pi_controller.rs)）
    - デフォルト設定: 有効 → **無効** に変更
    - 参照実装では出力飽和時も積分項が蓄積され続ける
    - これによりモーター始動時や負荷変動時の応答性が向上
    - 制御の安定性が大幅に改善
+
+### コードモジュール化（Rust 2018+スタイル）
+- タスクを`src/tasks/`に分離（led, can, motor_control, voltage_monitor）
+- 設定パラメータを`config.rs`に集約（マジックナンバー排除）
+- グローバル状態を`state.rs`に集約（Mutex保護）
+- ハードウェア初期化を`hardware.rs`に分離
+- 可読性・保守性・テスタビリティの向上

@@ -567,7 +567,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "g4-driver"
+name = "g4-driver-firmware"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
