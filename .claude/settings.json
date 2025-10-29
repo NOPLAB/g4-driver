@@ -3,6 +3,7 @@
         "allow": [
             "Bash(cargo build:*)",
             "Bash(cargo test:*)",
+            "Bash(ls:*)",
             "mcp__firecrawl"
         ],
         "deny": [
