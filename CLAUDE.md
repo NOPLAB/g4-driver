@@ -6,12 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 STM32G431VBTxマイコンを使用したBLDCモータードライバー。Hall センサベースの FOC（Field Oriented Control）実装で、CAN 通信によるモーター制御を行う Embassy 非同期フレームワークベースの組み込み Rust プロジェクトです。
 
-**Cargoワークスペース構造**: プロジェクトはワークスペースとして構成されています。ファームウェアコードは `firmware/` サブディレクトリに配置され、将来的に他のクレート（シミュレーター、テストユーティリティなど）を追加できる拡張性のある構造になっています。
+**プロジェクト構造**: このリポジトリには複数の独立したコンポーネントが含まれています：
+
+- `firmware/` - STM32組み込みファームウェア（`no_std`、Embassy ベース）
+- `controller/` - CAN通信用デスクトップGUIコントローラー（Dioxus、`std`）
+- `scripts/` - CANデバッグ用Bashスクリプト
 
 ## 開発コマンド
 
-### ビルドとフラッシュ
+**重要**: このリポジトリは複数の独立したプロジェクトを含むため、作業ディレクトリに注意してください。
+
+### ファームウェア（firmware/）
+
+#### ビルドとフラッシュ
+
 ```bash
+# ファームウェアディレクトリに移動
+cd firmware
+
 # ビルドしてデバイスにフラッシュ・実行（デバッグ機能有効）
 cargo run
 
@@ -23,14 +35,121 @@ cargo build
 cargo build --release
 ```
 
-### デバッグ
+#### デバッグ
+
 - デフォルトで `debug` フィーチャーが有効（`defmt`、`defmt-rtt`、`panic-probe` を含む）
 - ログレベルは `.cargo/config.toml` の `DEFMT_LOG = "trace"` で設定
 - `probe-rs` がデバッガとして使用される（STM32G431VBTx チップ指定）
 
-### フォーマット
+#### Lint とフォーマット
+
 ```bash
+cd firmware
 cargo fmt
+cargo clippy
+```
+
+### コントローラー（controller/）
+
+デスクトップGUIアプリケーション - モータードライバーをCAN経由で制御・監視
+
+#### ビルドと実行
+
+```bash
+# コントローラーディレクトリに移動
+cd controller
+
+# ビルドと実行
+cargo run
+
+# リリースビルド
+cargo run --release
+```
+
+#### 機能
+
+- **CAN接続管理**: socketcanインターフェース（`can0`、`vcan0`、`slcan0`など）への接続
+- **モーター制御**: 速度指令、PIゲイン設定、モーター有効/無効切替
+- **ステータス監視**: リアルタイムでモーター速度、電気角、電圧状態を表示
+- **設定UI**: PIゲイン、角度オフセット、最小電圧などの動的調整
+
+#### 技術スタック
+
+- **Dioxus**: Reactライクなデスクトップアプリケーションフレームワーク
+- **tokio-socketcan**: 非同期CAN通信
+- **tracing**: 構造化ログ
+
+### CANデバッグスクリプト（scripts/can.sh）
+
+コマンドライン経由でモーターを制御・デバッグするためのBashスクリプト
+
+#### 使い方
+
+```bash
+# スクリプトに実行権限を付与（初回のみ）
+chmod +x scripts/can.sh
+
+# 使用方法を表示
+./scripts/can.sh
+
+# 速度指令を送信（1000 RPM）
+./scripts/can.sh speed 1000
+
+# PIゲインを設定
+./scripts/can.sh pi 0.5 0.05
+
+# モーター有効化
+./scripts/can.sh enable
+
+# ステータスを監視
+./scripts/can.sh monitor
+
+# テストシーケンスを実行（自動ランプアップ/ダウン）
+./scripts/can.sh test
+
+# 異なるCANインターフェースを使用
+CAN_INTERFACE=can0 ./scripts/can.sh speed 500
+```
+
+#### サポートされるコマンド
+
+- `speed <RPM>` - 速度指令送信
+- `pi <Kp> <Ki>` - PIゲイン設定
+- `enable` / `disable` - モーター有効/無効
+- `estop` - 緊急停止
+- `monitor` - ステータスメッセージ監視（0x200、0x201）
+- `dump` - 全CANトラフィックをダンプ
+- `sniffer` - インタラクティブCANスニファー
+- `test` - 自動テストシーケンス実行
+
+### CANインターフェース設定
+
+#### 仮想CAN（開発/テスト用）
+
+```bash
+# vcan0の作成
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+#### ハードウェアCAN
+
+```bash
+# 250kbpsで設定（ファームウェアと一致）
+sudo ip link set can0 type can bitrate 250000
+sudo ip link set up can0
+```
+
+#### slcan（USB-CANアダプター）
+
+```bash
+# slcanインターフェースのセットアップ（250kbps）
+sudo slcand -o -c -s6 /dev/ttyUSB0 slcan0
+sudo ip link set up slcan0
+
+# または scripts/can.sh が自動的にセットアップを試みます
+CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 ```
 
 ## アーキテクチャ
@@ -70,8 +189,9 @@ cargo fmt
 
 ## ソフトウェア構造
 
-### モジュール構成
-プロジェクトは以下のモジュールで構成されています：
+### ファームウェアモジュール構成
+
+ファームウェアは以下のモジュールで構成されています：
 
 - **[firmware/src/main.rs](firmware/src/main.rs)** - メインエントリーポイント、ハードウェア初期化、タスク起動
 - **[firmware/src/config.rs](firmware/src/config.rs)** - 全設定パラメータの集約（モーター、PWM、CAN、オープンループ等）
@@ -88,6 +208,22 @@ cargo fmt
 - **[firmware/src/foc/](firmware/src/foc/)** - FOC制御アルゴリズム実装
 - **[firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)** - CANプロトコル定義とパーサー
 - **[firmware/src/fmt.rs](firmware/src/fmt.rs)** - ログマクロ（defmt/core切り替え）
+
+### コントローラーモジュール構成
+
+コントローラーは以下のモジュールで構成されています：
+
+- **[controller/src/main.rs](controller/src/main.rs)** - Dioxusアプリケーションのエントリーポイント
+- **[controller/src/state.rs](controller/src/state.rs)** - アプリケーション状態管理（CAN接続、モーターステータス等）
+- **[controller/src/can/](controller/src/can/)** - CAN通信モジュール
+  - [mod.rs](controller/src/can/mod.rs) - CAN モジュール公開インターフェース
+  - [protocol.rs](controller/src/can/protocol.rs) - CANプロトコル実装（firmwareと共通のロジック）
+  - [manager.rs](controller/src/can/manager.rs) - CAN接続管理、送受信ロジック
+- **[controller/src/ui/](controller/src/ui/)** - Dioxus UIコンポーネント
+  - [mod.rs](controller/src/ui/mod.rs) - UI モジュール公開インターフェース
+  - [connection.rs](controller/src/ui/connection.rs) - CAN接続UI（接続バー、インターフェース選択）
+  - [control.rs](controller/src/ui/control.rs) - モーター制御UI（速度指令、有効/無効ボタン）
+  - [settings.rs](controller/src/ui/settings.rs) - 設定UI（PIゲイン、オフセット、最小電圧等）
 
 ### Embassy非同期ランタイム
 - `#[embassy_executor::main]` でメインループ
@@ -198,12 +334,32 @@ cargo fmt
 
 **メリット**: ソフトウェアポーリング不要、マイクロ秒精度のタイムスタンプ、CPUオーバーヘッド最小化
 
-### CANプロトコル（[firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)）
-- CAN ID定義: `can_ids` モジュール
-- パース関数: `parse_speed_command()`, `parse_pi_gains()`, `parse_enable_command()`
-- エンコード関数: `encode_status()`, `decode_status()`
-- 全てリトルエンディアンf32形式
-- テストコード付き（`#[cfg(test)]`）
+### CANプロトコル
+
+**共通プロトコル**: ファームウェア、コントローラー、スクリプトは全て同じCANプロトコルを使用
+
+#### CAN ID定義
+
+- `0x100`: 速度指令（Host → Driver）- f32 RPM、4バイト
+- `0x101`: PIゲイン設定（Host → Driver）- Kp: f32、Ki: f32、8バイト
+- `0x102`: モーター有効/無効（Host → Driver）- u8: 0=無効、1=有効
+- `0x200`: モーターステータス（Driver → Host）- 速度: f32 RPM、電気角: f32 rad、8バイト
+- `0x201`: 電圧ステータス（Driver → Host）- 電圧: f32 V、フラグ: u8、5バイト
+- `0x000`: 緊急停止（Host → Driver）- 任意のデータ
+
+#### 実装
+
+- **ファームウェア**: [firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)
+  - パース関数: `parse_speed_command()`, `parse_pi_gains()`, `parse_enable_command()`
+  - エンコード関数: `encode_status()`, `decode_status()`
+  - 全てリトルエンディアンf32形式
+  - テストコード付き（`#[cfg(test)]`）
+- **コントローラー**: [controller/src/can/protocol.rs](controller/src/can/protocol.rs)
+  - ファームウェアと同じプロトコルロジックを実装
+  - エンコード/デコード関数
+- **スクリプト**: [scripts/can.sh](scripts/can.sh)
+  - Python3 `struct.pack('<f')` でf32をリトルエンディアンに変換
+  - `candump`/`cansend` でCAN通信
 
 ### Config/State/Hardware モジュール
 - **[firmware/src/config.rs](firmware/src/config.rs)**: 全設定パラメータを集約（マジックナンバー排除）
@@ -243,12 +399,20 @@ cargo fmt
 
 ## 重要な制約
 
+### ファームウェアの制約
+
 - `#![no_std]`、`#![no_main]`: 標準ライブラリ不使用の bare metal 環境
 - 浮動小数点演算に `libm` クレートを使用（`roundf`、`sin`、`cos` など）
   - **最適化**: SVPWMでは三角関数を使わない高速方式を採用
 - メモリ制約の厳しい組み込み環境のため、ヒープアロケーション非推奨
-- FOC制御は1kHzループで実行されるため、処理時間に注意（1ms以内に完了必要）
+- FOC制御は2.5kHz（400μs周期）ループで実行されるため、処理時間に注意（400μs以内に完了必要）
   - SVPWM最適化により計算負荷を削減
+
+### コントローラーの制約
+
+- 標準ライブラリ（`std`）を使用可能
+- Dioxusデスクトップアプリケーション（非同期ランタイム: tokio）
+- socketcanを使用するため、Linux環境が必要（Windows/macOSはWSL/VM経由）
 
 ## 最適化履歴と設計判断
 
