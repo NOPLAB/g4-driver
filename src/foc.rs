@@ -29,6 +29,7 @@ pub enum ControlMode {
 #[derive(Debug, Clone, Copy)]
 pub struct SixStepState {
     /// 現在のステップ (0-5)
+    #[allow(dead_code)]
     pub step: u8,
     /// U相のデューティ比 (0-100)
     pub duty_u: u16,

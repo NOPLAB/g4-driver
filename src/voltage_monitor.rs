@@ -134,16 +134,19 @@ impl VoltageMonitor {
     }
 
     /// 現在の状態を取得
+    #[allow(dead_code)]
     pub fn get_state(&self) -> VoltageMonitorState {
         self.state
     }
 
     /// 現在の電圧を取得 [V]
+    #[allow(dead_code)]
     pub fn get_voltage(&self) -> f32 {
         self.state.voltage
     }
 
     /// しきい値を更新
+    #[allow(dead_code)]
     pub fn set_thresholds(&mut self, overvoltage: f32, undervoltage: f32) {
         self.config.overvoltage_threshold = overvoltage;
         self.config.undervoltage_threshold = undervoltage;
@@ -154,11 +157,13 @@ impl VoltageMonitor {
     }
 
     /// フィルタ係数を更新
+    #[allow(dead_code)]
     pub fn set_filter_alpha(&mut self, alpha: f32) {
         self.config.filter_alpha = alpha.clamp(0.0, 1.0);
     }
 
     /// リセット（フィルタ状態をクリア）
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = VoltageMonitorState::new();
     }

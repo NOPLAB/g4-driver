@@ -75,9 +75,10 @@ fn inverse_park_libm(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
 ///
 /// # Returns
 /// Tuple of (v_u, v_v, v_w) three-phase voltages
+#[allow(dead_code)]
 pub fn inverse_clarke(v_alpha: f32, v_beta: f32) -> (f32, f32, f32) {
     // Constants for Clarke transform
-    const SQRT3_DIV_2: f32 = 0.866025404; // sqrt(3) / 2
+    const SQRT3_DIV_2: f32 = 0.866_025_4; // sqrt(3) / 2
     const ONE_DIV_2: f32 = 0.5;
 
     let v_u = v_alpha;
@@ -118,15 +119,16 @@ pub fn limit_voltage(vd: f32, vq: f32, max_voltage: f32) -> (f32, f32) {
 ///
 /// # Returns
 /// Normalized angle in range [0, 2π)
+#[allow(dead_code)]
 pub fn normalize_angle(angle: f32) -> f32 {
-    const TWO_PI: f32 = 6.283185307; // 2 * PI
+    use core::f32::consts::TAU;
 
     let mut normalized = angle;
-    while normalized >= TWO_PI {
-        normalized -= TWO_PI;
+    while normalized >= TAU {
+        normalized -= TAU;
     }
     while normalized < 0.0 {
-        normalized += TWO_PI;
+        normalized += TAU;
     }
     normalized
 }

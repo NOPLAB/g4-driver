@@ -151,19 +151,19 @@ impl HallSensor {
             if self.enable_interpolation && self.speed_rpm > 0.0 && !self.first_update {
                 // Calculate electrical angular velocity (rad/s)
                 let electrical_rpm = self.speed_rpm * self.pole_pairs as f32;
-                let electrical_omega = electrical_rpm * 0.104719755; // RPM to rad/s (2*PI/60)
+                let electrical_omega = electrical_rpm * (core::f32::consts::TAU / 60.0); // RPM to rad/s (2*PI/60)
 
                 // Interpolate angle based on time since last edge
                 let angle_increment = electrical_omega * self.time_since_edge;
                 self.electrical_angle = self.hall_sector_angle + angle_increment;
 
                 // Normalize angle to [0, 2π)
-                const TWO_PI: f32 = 6.283185307;
-                while self.electrical_angle >= TWO_PI {
-                    self.electrical_angle -= TWO_PI;
+                use core::f32::consts::TAU;
+                while self.electrical_angle >= TAU {
+                    self.electrical_angle -= TAU;
                 }
                 while self.electrical_angle < 0.0 {
-                    self.electrical_angle += TWO_PI;
+                    self.electrical_angle += TAU;
                 }
             } else {
                 // No interpolation: use discrete Hall sensor angle
@@ -179,11 +179,13 @@ impl HallSensor {
     }
 
     /// Get current electrical angle in radians
+    #[allow(dead_code)]
     pub fn get_electrical_angle(&self) -> f32 {
         self.electrical_angle
     }
 
     /// Get current speed in RPM
+    #[allow(dead_code)]
     pub fn get_speed_rpm(&self) -> f32 {
         self.speed_rpm
     }
@@ -202,11 +204,13 @@ impl HallSensor {
     ///
     /// # Arguments
     /// * `enable` - True to enable interpolation, false for discrete Hall angles only
+    #[allow(dead_code)]
     pub fn set_interpolation(&mut self, enable: bool) {
         self.enable_interpolation = enable;
     }
 
     /// Check if interpolation is enabled
+    #[allow(dead_code)]
     pub fn is_interpolation_enabled(&self) -> bool {
         self.enable_interpolation
     }
@@ -217,6 +221,7 @@ impl HallSensor {
     /// * `alpha` - Filter coefficient (0.0-1.0)
     ///   - Lower values = more filtering (smoother but slower response)
     ///   - Higher values = less filtering (faster but noisier)
+    #[allow(dead_code)]
     pub fn set_filter_alpha(&mut self, alpha: f32) {
         self.speed_filter_alpha = alpha.clamp(0.0, 1.0);
     }

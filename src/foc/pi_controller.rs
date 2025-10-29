@@ -109,6 +109,7 @@ impl PiController {
     /// # Arguments
     /// * `output_min` - Minimum output limit
     /// * `output_max` - Maximum output limit
+    #[allow(dead_code)]
     pub fn set_limits(&mut self, output_min: f32, output_max: f32) {
         self.output_min = output_min;
         self.output_max = output_max;
@@ -118,17 +119,20 @@ impl PiController {
     ///
     /// # Arguments
     /// * `output_limit` - Output limit (symmetric)
+    #[allow(dead_code)]
     pub fn set_symmetric_limit(&mut self, output_limit: f32) {
         self.output_min = -output_limit;
         self.output_max = output_limit;
     }
 
     /// Get the current output
+    #[allow(dead_code)]
     pub fn get_output(&self) -> f32 {
         self.last_output
     }
 
     /// Get the current integral term
+    #[allow(dead_code)]
     pub fn get_integral(&self) -> f32 {
         self.integral
     }
@@ -147,11 +151,13 @@ impl PiController {
     ///
     /// # Arguments
     /// * `enabled` - True to enable anti-windup, false to disable
+    #[allow(dead_code)]
     pub fn set_anti_windup(&mut self, enabled: bool) {
         self.anti_windup_enabled = enabled;
     }
 
     /// Check if output is currently saturated
+    #[allow(dead_code)]
     pub fn is_saturated(&self) -> bool {
         self.last_output <= self.output_min || self.last_output >= self.output_max
     }

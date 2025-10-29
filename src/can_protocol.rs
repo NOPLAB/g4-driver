@@ -136,6 +136,7 @@ pub fn encode_status(speed_rpm: f32, electrical_angle: f32) -> [u8; 8] {
 /// # Returns
 /// * `Some(MotorStatus)` if parsing successful
 /// * `None` if data length is incorrect
+#[allow(dead_code)]
 pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
     if data.len() < 8 {
         return None;
@@ -192,6 +193,7 @@ pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool
 /// # Returns
 /// * `Some((voltage, overvoltage, undervoltage))` if parsing successful
 /// * `None` if data length is incorrect
+#[allow(dead_code)]
 pub fn decode_voltage_status(data: &[u8]) -> Option<(f32, bool, bool)> {
     if data.len() < 5 {
         return None;

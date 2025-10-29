@@ -2,22 +2,8 @@
 //!
 //! ペリフェラルの初期化ロジックを集約します。
 
-use embassy_stm32::{
-    adc::{Adc, AdcChannel, SampleTime},
-    bind_interrupts, can,
-    gpio::{Level, Output, Speed},
-    opamp::{OpAmp, OpAmpSpeed},
-    peripherals,
-    timer::{
-        complementary_pwm::{ComplementaryPwm, ComplementaryPwmPin},
-        low_level::CountingMode,
-        simple_pwm::PwmPin,
-        Channel,
-    },
-    Config, Peripherals,
-};
+use embassy_stm32::{bind_interrupts, can, peripherals, Config};
 
-use crate::config;
 use crate::fmt::*;
 use crate::hall_tim;
 

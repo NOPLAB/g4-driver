@@ -246,7 +246,6 @@ pub fn calculate_speed_rpm(period_cycles: u32, pole_pairs: u8) -> f32 {
 
     let freq_hz = SYSTEM_CLOCK_HZ / period_cycles as f32; // エッジ周波数 [Hz]
     let elec_rpm = freq_hz * 60.0 / STEPS_PER_ELEC_REV; // 電気角RPM
-    let mech_rpm = elec_rpm / pole_pairs as f32; // 機械角RPM
 
-    mech_rpm
+    elec_rpm / pole_pairs as f32 // 機械角RPM
 }
