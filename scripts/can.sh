@@ -12,6 +12,7 @@ SPEED_CMD_ID="100"
 PI_GAINS_ID="101"
 ENABLE_CMD_ID="102"
 STATUS_ID="200"
+VOLTAGE_STATUS_ID="201"
 EMERGENCY_STOP_ID="000"
 
 # Color output
@@ -146,7 +147,7 @@ emergency_stop() {
 
 # Monitor status messages
 monitor_status() {
-    echo -e "${BLUE}Monitoring motor status (ID 0x$STATUS_ID)...${NC}"
+    echo -e "${BLUE}Monitoring motor status (ID 0x$STATUS_ID) and voltage (ID 0x$VOLTAGE_STATUS_ID)...${NC}"
     echo "Press Ctrl+C to stop"
     echo ""
 
@@ -165,6 +166,33 @@ monitor_status() {
                 angle=$(hex_to_f32 "$angle_hex")
 
                 echo -e "${GREEN}[$(date +%H:%M:%S.%3N)]${NC} Speed: ${BLUE}${speed}${NC} RPM, Angle: ${BLUE}${angle}${NC} rad"
+            fi
+        elif echo "$line" | grep -q " $VOLTAGE_STATUS_ID "; then
+            # Extract hex data for voltage status
+            hex_data=$(echo "$line" | awk '{print $4$5$6$7$8$9}' | tr -d ' ')
+
+            if [ ${#hex_data} -ge 10 ]; then
+                # Extract voltage (first 4 bytes) and flags (5th byte)
+                voltage_hex=${hex_data:0:8}
+                flags_hex=${hex_data:8:2}
+
+                voltage=$(hex_to_f32 "$voltage_hex")
+                flags=$((16#$flags_hex))
+
+                # Parse flags (bit 0: overvoltage, bit 1: undervoltage)
+                overvoltage=$((flags & 0x01))
+                undervoltage=$((flags & 0x02))
+
+                status_str=""
+                if [ $overvoltage -ne 0 ]; then
+                    status_str="${RED}OVERVOLTAGE${NC}"
+                elif [ $undervoltage -ne 0 ]; then
+                    status_str="${RED}UNDERVOLTAGE${NC}"
+                else
+                    status_str="${GREEN}OK${NC}"
+                fi
+
+                echo -e "${GREEN}[$(date +%H:%M:%S.%3N)]${NC} Voltage: ${BLUE}${voltage}${NC} V, Status: $status_str"
             fi
         fi
     done
@@ -189,8 +217,8 @@ test_sequence() {
     echo -e "${BLUE}Running test sequence...${NC}"
     echo ""
 
-    echo "1. Set PI gains to default (Kp=0.1, Ki=0.01)"
-    send_pi_gains 0.1 0.01
+    echo "1. Set PI gains to default (Kp=0.5, Ki=0.05)"
+    send_pi_gains 0.5 0.05
     sleep 1
 
     echo ""
@@ -236,14 +264,22 @@ usage() {
     echo "  enable              Enable motor"
     echo "  disable             Disable motor"
     echo "  estop               Emergency stop"
-    echo "  monitor             Monitor motor status (ID 0x200)"
+    echo "  monitor             Monitor motor status (ID 0x200) and voltage (ID 0x201)"
     echo "  dump                Dump all CAN traffic"
     echo "  sniffer             Interactive CAN sniffer"
     echo "  test                Run test sequence"
     echo ""
+    echo "CAN Protocol:"
+    echo "  0x100: Speed command (f32 RPM, 4 bytes)"
+    echo "  0x101: PI gains (Kp: f32, Ki: f32, 8 bytes)"
+    echo "  0x102: Motor enable (u8: 0=disable, 1=enable)"
+    echo "  0x200: Motor status (speed: f32, angle: f32, 8 bytes)"
+    echo "  0x201: Voltage status (voltage: f32, flags: u8, 5 bytes)"
+    echo "  0x000: Emergency stop"
+    echo ""
     echo "Examples:"
     echo "  $0 speed 1000              # Set speed to 1000 RPM"
-    echo "  $0 pi 0.15 0.02            # Set Kp=0.15, Ki=0.02"
+    echo "  $0 pi 0.5 0.05             # Set Kp=0.5, Ki=0.05 (default)"
     echo "  $0 enable                  # Enable motor"
     echo "  $0 monitor                 # Monitor status messages"
     echo ""
