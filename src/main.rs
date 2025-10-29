@@ -4,6 +4,7 @@
 mod can_protocol;
 mod fmt;
 mod foc;
+mod hall_tim;
 
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
@@ -16,8 +17,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::{
     adc::{Adc, AdcChannel, SampleTime},
     bind_interrupts, can,
-    exti::ExtiInput,
-    gpio::{Level, Output, Pull, Speed},
+    gpio::{Level, Output, Speed},
     opamp::{OpAmp, OpAmpSpeed},
     peripherals,
     time::Hertz,
@@ -31,8 +31,6 @@ use embassy_stm32::{
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Ticker, Timer};
-
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 use can_protocol::{
     can_ids, encode_status, parse_enable_command, parse_pi_gains, parse_speed_command, MotorStatus,
@@ -65,22 +63,6 @@ const OPENLOOP_INITIAL_RPM: f32 = 30.0; // 初期回転数 [RPM]
 const OPENLOOP_TARGET_RPM: f32 = 500.0; // FOC切替回転数 [RPM]
 const OPENLOOP_ACCELERATION_RPM_PER_S: f32 = 50.0; // 加速度 [RPM/s]
 const OPENLOOP_DUTY_RATIO: u16 = 50; // デューティ比 (0-100)
-
-// Hallセンサー状態を高速Atomic変数で共有（ロックフリー・Mutex不要）
-// DWTサイクルカウンタを直接使用してナノ秒精度のタイムスタンプを実現
-static HALL_STATE: AtomicU8 = AtomicU8::new(0);
-static HALL_TIMESTAMP_CYCLES: AtomicU32 = AtomicU32::new(0);
-
-// システムクロック周波数（170MHz）
-const SYSTEM_CLOCK_HZ: u32 = 170_000_000;
-
-// DWTサイクルカウンタから経過時間（マイクロ秒）を計算
-// インライン展開で高速化
-#[inline(always)]
-fn cycles_to_us(cycles: u32) -> u32 {
-    // cycles / (170MHz / 1_000_000) = cycles / 170
-    cycles / 170
-}
 
 // 共有状態（Mutexで保護）
 static TARGET_SPEED: Mutex<ThreadModeRawMutex, f32> = Mutex::new(0.0);
@@ -198,47 +180,7 @@ pub async fn led_task(
     }
 }
 
-// Hallセンサー監視タスク - 超高速EXTI割り込みベースのエッジ検出
-// 最適化: Atomic変数 + DWTサイクルカウンタ直接読み取り + ログなし
-// 3つのHallセンサーピンのいずれかのエッジを検出し、状態を更新
-#[embassy_executor::task]
-pub async fn hall_sensor_task(
-    mut hall_h1: ExtiInput<'static>,
-    mut hall_h2: ExtiInput<'static>,
-    mut hall_h3: ExtiInput<'static>,
-) {
-    info!("Hall sensor task started (Ultra-fast EXTI + Atomic + DWT)");
-
-    loop {
-        // 3つのHallセンサーのいずれかのエッジを待機
-        embassy_futures::select::select3(
-            hall_h1.wait_for_any_edge(),
-            hall_h2.wait_for_any_edge(),
-            hall_h3.wait_for_any_edge(),
-        )
-        .await;
-
-        // === 最速パス: エッジ検出直後の処理 ===
-
-        // 1. DWTサイクルカウンタを直接読み取り（最速）
-        let timestamp_cycles = cortex_m::peripheral::DWT::cycle_count();
-
-        // 2. 全ピンの状態を即座に読み取り（ハードウェアレジスタアクセス）
-        let h1 = hall_h1.is_high();
-        let h2 = hall_h2.is_high();
-        let h3 = hall_h3.is_high();
-        let state = (h3 as u8) << 2 | (h2 as u8) << 1 | (h1 as u8);
-
-        // 3. Atomic変数に直接書き込み（ロックフリー・超高速）
-        // Relaxed ordering: 最速、順序保証は不要（各変数独立）
-        HALL_STATE.store(state, Ordering::Relaxed);
-        HALL_TIMESTAMP_CYCLES.store(timestamp_cycles, Ordering::Relaxed);
-
-        // ログ出力なし - 高頻度ログはパフォーマンス低下の原因
-        // 必要に応じてコメント解除
-        // trace!("Hall edge: state={}, cycles={}", state, timestamp_cycles);
-    }
-}
+// 注: Hallセンサー監視はTIM4ハードウェア割り込みで処理（hall_tim.rsを参照）
 
 // モーター制御タスク（2.5kHz FOCループ + オープンループ始動）
 #[embassy_executor::task]
@@ -375,11 +317,20 @@ pub async fn motor_control_task(mut uvw_pwm: ComplementaryPwm<'static, periphera
             ControlMode::ClosedLoopFoc => {
                 // クローズドループFOC制御
 
-                // ホールセンサ状態を高速Atomic変数から取得（ロックフリー）
-                let hall_state = HALL_STATE.load(Ordering::Relaxed);
+                // TIM4ハードウェアからHallセンサ状態と速度を取得
+                let hall_state = hall_tim::get_hall_state();
+                let period_cycles = hall_tim::get_period_cycles();
+                let is_timeout = hall_tim::is_timeout();
 
-                // 電気角・速度推定
-                let (hall_electrical_angle, speed_rpm) = hall_sensor.update(hall_state, dt);
+                // 速度計算（TIM4キャプチャベース）
+                let speed_rpm = if is_timeout {
+                    0.0
+                } else {
+                    hall_tim::calculate_speed_rpm(period_cycles, POLE_PAIRS)
+                };
+
+                // 電気角推定（Hallセンサーから）
+                let (hall_electrical_angle, _) = hall_sensor.update(hall_state, dt);
 
                 // PIゲイン更新チェック（非同期で更新された場合）
                 {
@@ -456,15 +407,16 @@ pub async fn motor_control_task(mut uvw_pwm: ComplementaryPwm<'static, periphera
                         );
                     }
                     ControlMode::ClosedLoopFoc => {
-                        // ホールセンサ値を高速取得（ログ用）
-                        let hall_state = HALL_STATE.load(Ordering::Relaxed);
+                        // TIM4ベースのHallセンサ値を取得（ログ用）
+                        let hall_state = hall_tim::get_hall_state();
+                        let period_cycles = hall_tim::get_period_cycles();
 
                         // 最新のステータスを取得
                         let status = *MOTOR_STATUS.lock().await;
                         let target_speed = *TARGET_SPEED.lock().await;
                         debug!(
-                            "[FOC] Speed: {}/{} RPM, Angle: {}rad, Hall: {}",
-                            status.speed_rpm, target_speed, status.electrical_angle, hall_state
+                            "[FOC TIM4] Speed: {}/{} RPM, Angle: {}rad, Hall: {}, Period: {} cycles",
+                            status.speed_rpm, target_speed, status.electrical_angle, hall_state, period_cycles
                         );
                     }
                 }
@@ -599,10 +551,13 @@ async fn main(spawner: Spawner) {
     uvw_pwm.enable(Channel::Ch2);
     uvw_pwm.enable(Channel::Ch3);
 
-    // ホールセンサ初期化（PB6=H1, PB7=H2, PB8=H3）- EXTI割り込み使用
-    let hall_h1 = ExtiInput::new(p.PB6, p.EXTI6, Pull::None);
-    let hall_h2 = ExtiInput::new(p.PB7, p.EXTI7, Pull::None);
-    let hall_h3 = ExtiInput::new(p.PB8, p.EXTI8, Pull::None);
+    // TIM4 Hallセンサーインターフェース初期化（PB6=H1, PB7=H2, PB8=H3）
+    // PACを使用した直接レジスタ操作（XORモード）
+    info!("Initializing TIM4 Hall Sensor Interface (XOR mode)...");
+    unsafe {
+        hall_tim::init_hall_timer();
+    }
+    info!("TIM4 Hall Sensor Interface initialized");
 
     // ================================================================================
     // ベンチマーク: inverse_park() パフォーマンス測定
@@ -657,12 +612,7 @@ async fn main(spawner: Spawner) {
 
     info!("Starting FOC motor control...");
 
-    // Hallセンサー監視タスクを起動
-    spawner
-        .spawn(hall_sensor_task(hall_h1, hall_h2, hall_h3))
-        .unwrap();
-
-    // モーター制御タスクを起動
+    // モーター制御タスクを起動（Hallセンサーは割り込みで処理）
     spawner.spawn(motor_control_task(uvw_pwm)).unwrap();
 
     info!("System initialized successfully");
