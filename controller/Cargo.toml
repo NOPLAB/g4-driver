@@ -1,0 +1,13 @@
+[package]
+name = "g4-driver-controller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dioxus = { version = "0.6", features = ["desktop"] }
+tokio = { version = "1.41", features = ["full"] }
+tokio-socketcan = "0.3"
+futures = "0.3"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
