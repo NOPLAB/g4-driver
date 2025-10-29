@@ -12,11 +12,23 @@ pub mod can_ids {
     /// Motor enable command (u8, 1 byte: 0=disable, 1=enable)
     pub const ENABLE_CMD: u32 = 0x102;
 
+    /// Save config to flash command (no data)
+    pub const SAVE_CONFIG: u32 = 0x103;
+
+    /// Reload config from flash command (no data)
+    pub const RELOAD_CONFIG: u32 = 0x104;
+
+    /// Reset config to defaults command (no data)
+    pub const RESET_CONFIG: u32 = 0x105;
+
     /// Motor status feedback (speed: f32, angle: f32, 8 bytes)
     pub const STATUS: u32 = 0x200;
 
     /// Voltage status feedback (voltage: f32, flags: u8, 5 bytes)
     pub const VOLTAGE_STATUS: u32 = 0x201;
+
+    /// Config status feedback (version: u16, crc_valid: u8, 3 bytes)
+    pub const CONFIG_STATUS: u32 = 0x202;
 
     /// Emergency stop (any data length)
     pub const EMERGENCY_STOP: u32 = 0x000;
@@ -275,6 +287,26 @@ pub fn decode_voltage_status(data: &[u8]) -> Option<VoltageStatus> {
         overvoltage,
         undervoltage,
     })
+}
+
+/// Decode config status from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be at least 3 bytes)
+///
+/// # Returns
+/// * `Some((version, crc_valid))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn decode_config_status(data: &[u8]) -> Option<(u16, bool)> {
+    if data.len() < 3 {
+        return None;
+    }
+
+    let version_bytes = [data[0], data[1]];
+    let version = u16::from_le_bytes(version_bytes);
+    let crc_valid = data[2] != 0;
+
+    Some((version, crc_valid))
 }
 
 #[cfg(test)]

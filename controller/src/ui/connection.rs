@@ -305,6 +305,13 @@ async fn can_receive_task(mut app_state: Signal<AppState>) {
                 if let Some(voltage_status) = CanManager::parse_voltage_status(&frame) {
                     app_state.write().voltage_status = voltage_status;
                 }
+
+                // Parse config status
+                if let Some((version, crc_valid)) = CanManager::parse_config_status(&frame) {
+                    let mut state = app_state.write();
+                    state.config_version = version;
+                    state.config_crc_valid = crc_valid;
+                }
             }
             Ok(None) => {
                 // Timeout - check connection health

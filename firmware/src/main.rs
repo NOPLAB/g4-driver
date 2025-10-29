@@ -4,6 +4,8 @@
 mod benchmark;
 mod can_protocol;
 mod config;
+mod config_storage;
+mod eeprom;
 mod fmt;
 mod foc;
 mod hall_tim;
@@ -21,6 +23,8 @@ use embassy_executor::Spawner;
 use embassy_stm32::{
     adc::{Adc, AdcChannel, SampleTime},
     can,
+    crc::{Config as CrcConfig, Crc},
+    flash::Flash,
     gpio::{Level, Output, Speed},
     opamp::{OpAmp, OpAmpSpeed},
     timer::{
@@ -42,13 +46,50 @@ async fn main(spawner: Spawner) {
     let config = hardware::create_clock_config();
     let p = embassy_stm32::init(config);
 
+    info!("========================================");
+    info!("STM32G431VB BLDC Motor Driver");
+    info!("========================================");
+
+    // フラッシュとCRC初期化（設定ロード用）
+    let mut flash = Flash::new_blocking(p.FLASH);
+    let crc_config = CrcConfig::default();
+    let mut crc = Crc::new(p.CRC, crc_config);
+
+    // 設定をフラッシュから読み込み（失敗時はデフォルト初期化）
+    info!("Loading configuration from flash...");
+    let loaded_config = eeprom::load_or_initialize_config(&mut flash, &mut crc).await;
+
+    // グローバル状態に設定を適用
+    {
+        let mut runtime_config = state::RUNTIME_CONFIG.lock().await;
+        *runtime_config = loaded_config;
+
+        let mut version = state::CONFIG_VERSION.lock().await;
+        *version = loaded_config.version;
+
+        let mut crc_valid = state::CONFIG_CRC_VALID.lock().await;
+        *crc_valid = true; // load_or_initialize_configが成功したらCRC有効
+
+        info!("Config loaded: version={}", loaded_config.version);
+        info!("  PI gains: Kp={}, Ki={}", loaded_config.speed_kp, loaded_config.speed_ki);
+        info!("  Max voltage: {}V", loaded_config.max_voltage);
+        info!("  Pole pairs: {}", loaded_config.pole_pairs);
+    }
+
+    // PIゲインをSPEED_PI_GAINSに適用
+    {
+        let mut gains = state::SPEED_PI_GAINS.lock().await;
+        *gains = (loaded_config.speed_kp, loaded_config.speed_ki);
+    }
+
     // LED初期化＆タスク起動
     let led1 = Output::new(p.PC13, Level::High, Speed::Low);
     let led2 = Output::new(p.PC14, Level::High, Speed::Low);
     let led3 = Output::new(p.PC15, Level::High, Speed::Low);
     spawner.spawn(led_task(led1, led2, led3)).unwrap();
 
-    // CAN初期化＆タスク起動
+    // CAN初期化＆タスク起動（FlashとCRCも渡す）
+    // 注: flash と crc の所有権がcan_taskに移る
     let mut can_configurator = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
     can_configurator.properties().set_extended_filter(
         can::filter::ExtendedFilterSlot::_0,
@@ -60,7 +101,7 @@ async fn main(spawner: Spawner) {
     );
     can_configurator.set_bitrate(config::can::BITRATE);
     let can = can_configurator.start(can::OperatingMode::NormalOperationMode);
-    spawner.spawn(can_task(can)).unwrap();
+    spawner.spawn(can_task(can, flash, crc)).unwrap();
 
     // ADC初期化
     let mut adc1 = Adc::new(p.ADC1);
@@ -126,6 +167,9 @@ async fn main(spawner: Spawner) {
     info!("  - 0x100: Speed command (f32 RPM)");
     info!("  - 0x101: PI gains (Kp, Ki as f32)");
     info!("  - 0x102: Enable motor (u8: 0=off, 1=on)");
+    info!("  - 0x103: Save config to flash");
+    info!("  - 0x104: Reload config from flash");
+    info!("  - 0x105: Reset config to defaults");
     info!("  - 0x000: Emergency stop");
 
     // メインループ（将来の拡張用）

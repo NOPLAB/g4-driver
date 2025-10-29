@@ -91,6 +91,24 @@ impl CanManager {
         self.send_frame(can_ids::EMERGENCY_STOP, &[]).await
     }
 
+    /// Send save config command
+    pub async fn send_save_config(&self) -> Result<()> {
+        info!("Sending save config command");
+        self.send_frame(can_ids::SAVE_CONFIG, &[]).await
+    }
+
+    /// Send reload config command
+    pub async fn send_reload_config(&self) -> Result<()> {
+        info!("Sending reload config command");
+        self.send_frame(can_ids::RELOAD_CONFIG, &[]).await
+    }
+
+    /// Send reset config command
+    pub async fn send_reset_config(&self) -> Result<()> {
+        info!("Sending reset config command");
+        self.send_frame(can_ids::RESET_CONFIG, &[]).await
+    }
+
     /// Receive next CAN frame with timeout
     ///
     /// # Arguments
@@ -127,6 +145,19 @@ impl CanManager {
     pub fn parse_voltage_status(frame: &CANFrame) -> Option<VoltageStatus> {
         if frame.id() == can_ids::VOLTAGE_STATUS {
             protocol::decode_voltage_status(frame.data())
+        } else {
+            None
+        }
+    }
+
+    /// Parse config status from CAN frame
+    ///
+    /// # Returns
+    /// * `Some((version, crc_valid))` if config status frame
+    /// * `None` if not a config status frame
+    pub fn parse_config_status(frame: &CANFrame) -> Option<(u16, bool)> {
+        if frame.id() == can_ids::CONFIG_STATUS {
+            protocol::decode_config_status(frame.data())
         } else {
             None
         }

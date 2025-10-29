@@ -63,6 +63,10 @@ pub struct AppState {
     pub settings: UserSettings,
     /// Last status update timestamp (milliseconds)
     pub last_status_update: u64,
+    /// Config version number (from driver)
+    pub config_version: u16,
+    /// Config CRC valid flag (from driver)
+    pub config_crc_valid: bool,
 }
 
 impl Default for AppState {
@@ -77,6 +81,8 @@ impl Default for AppState {
             voltage_status: VoltageStatus::default(),
             settings: UserSettings::default(),
             last_status_update: 0,
+            config_version: 0,
+            config_crc_valid: false,
         }
     }
 }

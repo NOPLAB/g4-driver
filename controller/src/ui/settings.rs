@@ -51,6 +51,42 @@ pub fn SettingsPanel() -> Element {
         app_state.write().settings.ki = DEFAULT_KI;
     };
 
+    // Save config handler
+    let on_save_config = move |_| {
+        info!("Saving config to flash");
+        spawn(async move {
+            let manager = app_state.read().can_manager.clone();
+            match manager.lock().await.send_save_config().await {
+                Ok(_) => info!("Save config command sent successfully"),
+                Err(e) => error!("Failed to send save config command: {}", e),
+            };
+        });
+    };
+
+    // Reload config handler
+    let on_reload_config = move |_| {
+        info!("Reloading config from flash");
+        spawn(async move {
+            let manager = app_state.read().can_manager.clone();
+            match manager.lock().await.send_reload_config().await {
+                Ok(_) => info!("Reload config command sent successfully"),
+                Err(e) => error!("Failed to send reload config command: {}", e),
+            };
+        });
+    };
+
+    // Reset config handler
+    let on_reset_config = move |_| {
+        info!("Resetting config to defaults");
+        spawn(async move {
+            let manager = app_state.read().can_manager.clone();
+            match manager.lock().await.send_reset_config().await {
+                Ok(_) => info!("Reset config command sent successfully"),
+                Err(e) => error!("Failed to send reset config command: {}", e),
+            };
+        });
+    };
+
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 20px; max-width: 600px;",
@@ -204,6 +240,106 @@ pub fn SettingsPanel() -> Element {
                 }
             }
 
+            // Config Management Section
+            div {
+                style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
+
+                h2 {
+                    style: "margin: 0 0 15px 0; font-size: 20px; color: #333; border-bottom: 2px solid #28a745; padding-bottom: 10px;",
+                    "Configuration Management"
+                }
+
+                div {
+                    style: "display: flex; flex-direction: column; gap: 15px;",
+
+                    // Description
+                    div {
+                        style: "padding: 12px; background: #e7f9ed; border-left: 4px solid #28a745; border-radius: 4px;",
+                        p {
+                            style: "margin: 0; font-size: 14px; color: #555;",
+                            "Save current settings to flash memory for persistence across power cycles."
+                        }
+                    }
+
+                    // Config status display
+                    div {
+                        style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;",
+
+                        // Version
+                        div {
+                            style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #28a745;",
+                            div {
+                                style: "font-size: 12px; color: #666; margin-bottom: 5px;",
+                                "Config Version"
+                            }
+                            div {
+                                style: "font-size: 24px; font-weight: bold; color: #333;",
+                                "{state.config_version}"
+                            }
+                        }
+
+                        // CRC status
+                        div {
+                            style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #28a745;",
+                            div {
+                                style: "font-size: 12px; color: #666; margin-bottom: 5px;",
+                                "CRC Status"
+                            }
+                            div {
+                                style: if state.config_crc_valid {
+                                    "font-size: 18px; font-weight: bold; color: #28a745;"
+                                } else {
+                                    "font-size: 18px; font-weight: bold; color: #dc3545;"
+                                },
+                                if state.config_crc_valid {
+                                    "✓ Valid"
+                                } else {
+                                    "✗ Invalid"
+                                }
+                            }
+                        }
+                    }
+
+                    // Action buttons
+                    div {
+                        style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;",
+
+                        button {
+                            style: if is_connected {
+                                "padding: 10px 20px; border: none; background: #28a745; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            } else {
+                                "padding: 10px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            },
+                            onclick: on_save_config,
+                            disabled: !is_connected,
+                            "💾 Save to Flash"
+                        }
+
+                        button {
+                            style: if is_connected {
+                                "padding: 10px 20px; border: 1px solid #007bff; background: white; color: #007bff; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            } else {
+                                "padding: 10px 20px; border: 1px solid #ccc; background: white; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            },
+                            onclick: on_reload_config,
+                            disabled: !is_connected,
+                            "🔄 Reload from Flash"
+                        }
+
+                        button {
+                            style: if is_connected {
+                                "padding: 10px 20px; border: 1px solid #dc3545; background: white; color: #dc3545; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            } else {
+                                "padding: 10px 20px; border: 1px solid #ccc; background: white; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
+                            },
+                            onclick: on_reset_config,
+                            disabled: !is_connected,
+                            "⚠ Reset to Defaults"
+                        }
+                    }
+                }
+            }
+
             // Information Section
             div {
                 style: "padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;",
@@ -219,6 +355,9 @@ pub fn SettingsPanel() -> Element {
                     li { "The motor must be connected via CAN to apply settings" }
                     li { "Use caution when adjusting gains while the motor is running" }
                     li { "Default values are optimized for stable operation" }
+                    li { "Save to Flash: Persist current settings across power cycles" }
+                    li { "Reload from Flash: Restore settings from flash memory" }
+                    li { "Reset to Defaults: Restore factory default settings and save to flash" }
                 }
             }
         }
