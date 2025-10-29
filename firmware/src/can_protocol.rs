@@ -39,6 +39,36 @@ impl MotorStatus {
     }
 }
 
+impl Default for MotorStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Voltage status structure
+#[derive(Debug, Clone, Copy)]
+pub struct VoltageStatus {
+    pub voltage: f32,
+    pub overvoltage: bool,
+    pub undervoltage: bool,
+}
+
+impl VoltageStatus {
+    pub const fn new() -> Self {
+        Self {
+            voltage: 0.0,
+            overvoltage: false,
+            undervoltage: false,
+        }
+    }
+}
+
+impl Default for VoltageStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Parse speed command from CAN data
 ///
 /// # Arguments
@@ -191,10 +221,10 @@ pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool
 /// * `data` - CAN frame data (should be at least 5 bytes)
 ///
 /// # Returns
-/// * `Some((voltage, overvoltage, undervoltage))` if parsing successful
+/// * `Some(VoltageStatus)` if parsing successful
 /// * `None` if data length is incorrect
 #[allow(dead_code)]
-pub fn decode_voltage_status(data: &[u8]) -> Option<(f32, bool, bool)> {
+pub fn decode_voltage_status(data: &[u8]) -> Option<VoltageStatus> {
     if data.len() < 5 {
         return None;
     }
@@ -206,7 +236,11 @@ pub fn decode_voltage_status(data: &[u8]) -> Option<(f32, bool, bool)> {
     let overvoltage = (flags & 0x01) != 0;
     let undervoltage = (flags & 0x02) != 0;
 
-    Some((voltage, overvoltage, undervoltage))
+    Some(VoltageStatus {
+        voltage,
+        overvoltage,
+        undervoltage,
+    })
 }
 
 #[cfg(test)]
@@ -243,5 +277,19 @@ mod tests {
 
         assert_eq!(decoded.speed_rpm, speed);
         assert_eq!(decoded.electrical_angle, angle);
+    }
+
+    #[test]
+    fn test_encode_decode_voltage_status() {
+        let voltage = 24.5f32;
+        let overvoltage = true;
+        let undervoltage = false;
+
+        let encoded = encode_voltage_status(voltage, overvoltage, undervoltage);
+        let decoded = decode_voltage_status(&encoded).unwrap();
+
+        assert_eq!(decoded.voltage, voltage);
+        assert_eq!(decoded.overvoltage, overvoltage);
+        assert_eq!(decoded.undervoltage, undervoltage);
     }
 }
