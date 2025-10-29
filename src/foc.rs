@@ -12,6 +12,10 @@ pub use pi_controller::PiController;
 pub use svpwm::calculate_svpwm;
 pub use transforms::{inverse_park, limit_voltage};
 
+// Benchmark function for performance testing
+#[cfg(not(test))]
+pub use transforms::benchmark_inverse_park;
+
 /// モーター制御モード
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ControlMode {

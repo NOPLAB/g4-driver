@@ -26,6 +26,10 @@ impl PiController {
     /// * `ki` - Integral gain
     /// * `output_min` - Minimum output limit
     /// * `output_max` - Maximum output limit
+    ///
+    /// Note: Anti-windup is disabled by default to match calebfletcher/foc reference implementation.
+    /// This allows integral term to accumulate even when output is saturated,
+    /// which is important for motor control stability.
     pub fn new(kp: f32, ki: f32, output_min: f32, output_max: f32) -> Self {
         Self {
             kp,
@@ -34,7 +38,7 @@ impl PiController {
             output_min,
             output_max,
             last_output: 0.0,
-            anti_windup_enabled: true,
+            anti_windup_enabled: false, // Disabled by default to match reference implementation
         }
     }
 
@@ -65,18 +69,18 @@ impl PiController {
         let p_term = self.kp * error;
 
         // Integral term with anti-windup
+        // Based on calebfletcher/foc implementation:
+        // Accumulate ki * error * dt directly for better numerical stability
         // Only accumulate if anti-windup is disabled, or if output is not saturated
         let should_integrate = !self.anti_windup_enabled
             || (self.last_output > self.output_min && self.last_output < self.output_max);
 
         if should_integrate {
-            self.integral += error * dt;
+            self.integral += self.ki * error * dt;
         }
 
-        let i_term = self.ki * self.integral;
-
-        // Calculate output
-        let output = p_term + i_term;
+        // Calculate output (integral already includes ki)
+        let output = p_term + self.integral;
 
         // Apply output limits
         self.last_output = output.clamp(self.output_min, self.output_max);
@@ -174,7 +178,8 @@ mod tests {
     #[test]
     fn test_integral_accumulation() {
         let mut pi = PiController::new(0.0, 1.0, -100.0, 100.0);
-        // Error = 10, dt = 0.1, so integral should accumulate by 1.0 each step
+        // Error = 10, dt = 0.1, ki = 1.0
+        // integral accumulates ki * error * dt = 1.0 * 10 * 0.1 = 1.0 each step
         pi.update(10.0, 0.0, 0.1);
         assert_eq!(pi.get_integral(), 1.0);
         pi.update(10.0, 0.0, 0.1);

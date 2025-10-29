@@ -5,15 +5,16 @@ use crate::fmt::*;
 /// Hall sensor states to electrical angle mapping (in degrees)
 /// Hall state format: (H3 << 2) | (H2 << 1) | H1
 /// Valid states are 1-6 (0b001 to 0b110), invalid states are 0 (0b000) and 7 (0b111)
+/// Using sector CENTER angles for better FOC accuracy
 const HALL_ANGLE_TABLE: [Option<f32>; 8] = [
-    None,          // 0b000: Invalid state
-    Some(0.0),     // 0b001: Sector 1
-    Some(60.0),    // 0b010: Sector 2
-    Some(120.0),   // 0b011: Sector 3
-    Some(180.0),   // 0b100: Sector 4
-    Some(240.0),   // 0b101: Sector 5
-    Some(300.0),   // 0b110: Sector 6
-    None,          // 0b111: Invalid state
+    None,        // 0b000: Invalid state
+    Some(30.0),  // 0b001: Sector 1 center
+    Some(90.0),  // 0b010: Sector 2 center
+    Some(150.0), // 0b011: Sector 3 center
+    Some(210.0), // 0b100: Sector 4 center
+    Some(270.0), // 0b101: Sector 5 center
+    Some(330.0), // 0b110: Sector 6 center
+    None,        // 0b111: Invalid state
 ];
 
 /// Hall sensor state machine for position and speed estimation
@@ -22,6 +23,8 @@ pub struct HallSensor {
     prev_state: u8,
     /// Current electrical angle in radians
     electrical_angle: f32,
+    /// Hall sector base angle in radians (updated at each edge)
+    hall_sector_angle: f32,
     /// Current speed in RPM
     speed_rpm: f32,
     /// Accumulated time since last hall edge (seconds)
@@ -36,6 +39,8 @@ pub struct HallSensor {
     /// Timeout threshold for speed estimation (seconds)
     /// If no edge detected within this time, speed is set to 0
     edge_timeout: f32,
+    /// Enable angle interpolation between Hall edges
+    enable_interpolation: bool,
 }
 
 impl HallSensor {
@@ -48,12 +53,14 @@ impl HallSensor {
         Self {
             prev_state: 0,
             electrical_angle: 0.0,
+            hall_sector_angle: 0.0,
             speed_rpm: 0.0,
             time_since_edge: 0.0,
             speed_filter_alpha: speed_filter_alpha.clamp(0.0, 1.0),
             pole_pairs,
             first_update: true,
             edge_timeout: 1.0, // 1 second timeout (< 60 RPM for 7 pole pairs)
+            enable_interpolation: true, // Enable angle interpolation by default
         }
     }
 
@@ -80,7 +87,16 @@ impl HallSensor {
         // Validate hall state
         if !Self::is_valid_state(hall_state) {
             error!("Invalid hall state: {}", hall_state);
-            // Keep previous values on invalid state
+
+            // Even with invalid state, accumulate time for timeout detection
+            self.time_since_edge += dt;
+
+            // Check for timeout and set speed to 0 if motor likely stopped
+            if self.time_since_edge > self.edge_timeout {
+                self.speed_rpm = 0.0;
+            }
+
+            // Keep previous electrical angle and current speed
             return (self.electrical_angle, self.speed_rpm);
         }
 
@@ -94,11 +110,13 @@ impl HallSensor {
                 // Calculate speed based on time between edges
                 // Each hall edge represents 60 electrical degrees
                 let electrical_degrees_per_edge = 60.0;
-                let mechanical_degrees_per_edge = electrical_degrees_per_edge / self.pole_pairs as f32;
+                let mechanical_degrees_per_edge =
+                    electrical_degrees_per_edge / self.pole_pairs as f32;
 
                 if self.time_since_edge > 0.0 {
                     // RPM = (degrees per edge / time) * (60 sec/min) / (360 deg/rev)
-                    let instant_rpm = (mechanical_degrees_per_edge / self.time_since_edge) * (60.0 / 360.0);
+                    let instant_rpm =
+                        (mechanical_degrees_per_edge / self.time_since_edge) * (60.0 / 360.0);
 
                     // Apply low-pass filter to smooth speed
                     self.speed_rpm = self.speed_filter_alpha * instant_rpm
@@ -116,6 +134,9 @@ impl HallSensor {
 
                 // Reset edge timer
                 self.time_since_edge = 0.0;
+
+                // Update hall sector base angle
+                self.hall_sector_angle = angle_rad;
             } else {
                 // Accumulate time since last edge
                 self.time_since_edge += dt;
@@ -126,8 +147,30 @@ impl HallSensor {
                 }
             }
 
-            // Update electrical angle
-            self.electrical_angle = angle_rad;
+            // Update electrical angle with interpolation
+            if self.enable_interpolation && self.speed_rpm > 0.0 && !self.first_update {
+                // Calculate electrical angular velocity (rad/s)
+                let electrical_rpm = self.speed_rpm * self.pole_pairs as f32;
+                let electrical_omega = electrical_rpm * 0.104719755; // RPM to rad/s (2*PI/60)
+
+                // Interpolate angle based on time since last edge
+                let angle_increment = electrical_omega * self.time_since_edge;
+                self.electrical_angle = self.hall_sector_angle + angle_increment;
+
+                // Normalize angle to [0, 2π)
+                const TWO_PI: f32 = 6.283185307;
+                while self.electrical_angle >= TWO_PI {
+                    self.electrical_angle -= TWO_PI;
+                }
+                while self.electrical_angle < 0.0 {
+                    self.electrical_angle += TWO_PI;
+                }
+            } else {
+                // No interpolation: use discrete Hall sensor angle
+                self.electrical_angle = angle_rad;
+                self.hall_sector_angle = angle_rad;
+            }
+
             self.prev_state = hall_state;
             self.first_update = false;
         }
@@ -149,9 +192,23 @@ impl HallSensor {
     pub fn reset(&mut self) {
         self.prev_state = 0;
         self.electrical_angle = 0.0;
+        self.hall_sector_angle = 0.0;
         self.speed_rpm = 0.0;
         self.time_since_edge = 0.0;
         self.first_update = true;
+    }
+
+    /// Enable or disable angle interpolation
+    ///
+    /// # Arguments
+    /// * `enable` - True to enable interpolation, false for discrete Hall angles only
+    pub fn set_interpolation(&mut self, enable: bool) {
+        self.enable_interpolation = enable;
+    }
+
+    /// Check if interpolation is enabled
+    pub fn is_interpolation_enabled(&self) -> bool {
+        self.enable_interpolation
     }
 
     /// Set the speed filter coefficient
@@ -179,9 +236,9 @@ mod tests {
 
     #[test]
     fn test_angle_lookup() {
-        assert_eq!(HALL_ANGLE_TABLE[1], Some(0.0));
-        assert_eq!(HALL_ANGLE_TABLE[2], Some(60.0));
-        assert_eq!(HALL_ANGLE_TABLE[6], Some(300.0));
+        assert_eq!(HALL_ANGLE_TABLE[1], Some(30.0));
+        assert_eq!(HALL_ANGLE_TABLE[2], Some(90.0));
+        assert_eq!(HALL_ANGLE_TABLE[6], Some(330.0));
         assert_eq!(HALL_ANGLE_TABLE[0], None);
         assert_eq!(HALL_ANGLE_TABLE[7], None);
     }

@@ -1,76 +1,75 @@
 // Space Vector PWM (SVPWM) generation
+//
+// This implementation is based on the calebfletcher/foc crate approach:
+// https://github.com/calebfletcher/foc
+//
+// It uses a fast x/y/z coordinate transformation and sign-based sector
+// detection instead of trigonometric functions, providing better
+// performance and accuracy for embedded systems.
 
-use libm::{atan2f, sqrtf};
+use libm::roundf;
 
 const SQRT3: f32 = 1.732050808; // sqrt(3)
-const ONE_DIV_SQRT3: f32 = 0.577350269; // 1 / sqrt(3)
-const TWO_DIV_3: f32 = 0.666666667; // 2 / 3
-const PI: f32 = 3.141592654;
-const PI_DIV_3: f32 = 1.047197551; // PI / 3 (60 degrees)
 
 /// Calculate Space Vector PWM duty cycles
 ///
 /// Implements SVPWM algorithm to generate three-phase PWM duty cycles
-/// from alpha-beta voltage commands. SVPWM provides better DC bus utilization
-/// compared to sinusoidal PWM (15% improvement).
+/// from alpha-beta voltage commands using fast x/y/z transformation.
+/// This method avoids trigonometric functions for better performance.
+///
+/// Based on: https://github.com/calebfletcher/foc
 ///
 /// # Arguments
 /// * `v_alpha` - Alpha-axis voltage command
 /// * `v_beta` - Beta-axis voltage command
-/// * `v_dc` - DC bus voltage
+/// * `v_dc` - DC bus voltage (not used in this implementation)
 /// * `max_duty` - Maximum duty cycle value (e.g., 100 for 0-100 range)
 ///
 /// # Returns
 /// Tuple of (duty_u, duty_v, duty_w) as u16 values
-pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
-    // Prevent division by zero
-    if v_dc <= 0.0 {
-        return (0, 0, 0);
-    }
+///
+/// # Algorithm
+/// 1. Convert alpha/beta to x/y/z coordinates
+/// 2. Determine sector (1-6) based on signs of x/y/z
+/// 3. Calculate duty cycles directly from x/y/z values
+/// 4. Convert from range [-1, 1] to [0, max_duty]
+pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, _v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
+    // Convert alpha/beta to x/y/z coordinates
+    // This transformation maps the alpha-beta plane to three axes
+    // that correspond to the six sectors of SVPWM
+    let sqrt_3_alpha = SQRT3 * v_alpha;
+    let x = v_beta;
+    let y = (v_beta + sqrt_3_alpha) / 2.0;
+    let z = (v_beta - sqrt_3_alpha) / 2.0;
 
-    // Normalize voltages to range [-1, 1]
-    let v_alpha_norm = v_alpha / v_dc;
-    let v_beta_norm = v_beta / v_dc;
-
-    // Calculate voltage magnitude
-    let magnitude = sqrtf(v_alpha_norm * v_alpha_norm + v_beta_norm * v_beta_norm);
-
-    // Calculate angle (0 to 2π)
-    let mut angle = atan2f(v_beta_norm, v_alpha_norm);
-    if angle < 0.0 {
-        angle += 2.0 * PI;
-    }
-
-    // Determine sector (1-6)
-    let sector = ((angle / PI_DIV_3) as u8) + 1;
-
-    // Calculate angle within sector (0 to π/3)
-    let angle_in_sector = angle - ((sector - 1) as f32) * PI_DIV_3;
-
-    // Calculate duty cycle times for adjacent vectors
-    // Using the standard SVPWM equations
-    let t1 = magnitude * SQRT3 * libm::sinf(PI_DIV_3 - angle_in_sector);
-    let t2 = magnitude * SQRT3 * libm::sinf(angle_in_sector);
-    let t0 = 1.0 - t1 - t2; // Zero vector time
-
-    // Distribute zero vector time equally
-    let t0_half = t0 / 2.0;
-
-    // Calculate duty cycles based on sector
-    let (ta, tb, tc) = match sector {
-        1 => (t0_half + t1 + t2, t0_half + t2, t0_half),
-        2 => (t0_half + t1, t0_half + t1 + t2, t0_half),
-        3 => (t0_half, t0_half + t1 + t2, t0_half + t2),
-        4 => (t0_half, t0_half + t1, t0_half + t1 + t2),
-        5 => (t0_half + t2, t0_half, t0_half + t1 + t2),
-        6 => (t0_half + t1 + t2, t0_half, t0_half + t1),
-        _ => (0.5, 0.5, 0.5), // Default to 50% (shouldn't happen)
+    // Determine sector (1-6) based on signs of x, y, z
+    // This is much faster than calculating angles with atan2
+    let sector: u8 = match (x >= 0.0, y >= 0.0, z >= 0.0) {
+        (true, true, false) => 1,
+        (_, true, true) => 2,
+        (true, false, true) => 3,
+        (false, false, true) => 4,
+        (_, false, false) => 5,
+        (false, true, false) => 6,
     };
 
-    // Convert to duty cycle values (0 to max_duty)
-    let duty_u = (ta * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
-    let duty_v = (tb * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
-    let duty_w = (tc * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
+    // Calculate duty cycles for each phase based on sector
+    // The ta, tb, tc values are in range [-1, 1]
+    let (ta, tb, tc) = match sector {
+        1 | 4 => (x - z, x + z, -x + z),
+        2 | 5 => (y - z, y + z, -y - z),
+        3 | 6 => (y - x, -y + x, -y - x),
+        _ => (0.0, 0.0, 0.0), // Should never happen
+    };
+
+    // Convert from range [-1, 1] to [0, max_duty]
+    // Formula: duty = (value + 1.0) / 2.0 * max_duty
+    let duty_u = roundf((ta + 1.0) / 2.0 * max_duty as f32)
+        .clamp(0.0, max_duty as f32) as u16;
+    let duty_v = roundf((tb + 1.0) / 2.0 * max_duty as f32)
+        .clamp(0.0, max_duty as f32) as u16;
+    let duty_w = roundf((tc + 1.0) / 2.0 * max_duty as f32)
+        .clamp(0.0, max_duty as f32) as u16;
 
     (duty_u, duty_v, duty_w)
 }

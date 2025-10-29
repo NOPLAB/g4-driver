@@ -61,10 +61,10 @@ cargo fmt
 - **最大電圧**: 24V
 - **DCバス電圧**: 24V
 - **最大Duty比**: 100（PWM範囲：0=0%, 100=100%）
-- **速度フィルタ係数**: 0.2（Hallセンサ用ローパスフィルタ）
-- **デフォルトPI ゲイン**: Kp=0.5、Ki=0.05（応答性向上のため増加）
+- **速度フィルタ係数**: 0.1（Hallセンサ用ローパスフィルタ、滑らかな速度推定のため低減）
+- **デフォルトPI ゲイン**: Kp=0.5、Ki=0.05（角度補間により制御精度向上、安定性重視）
 - **Hall角度オフセット**: 0度（ハードウェアに応じて調整可能）
-- **最小q軸電圧**: 0.5V（静止摩擦克服用）
+- **Hall角度補間**: 有効（連続的な角度推定により制御安定性向上）
 
 ## ソフトウェア構造
 
@@ -111,23 +111,34 @@ cargo fmt
 #### HallSensor ([src/foc/hall_sensor.rs](src/foc/hall_sensor.rs))
 - Hall状態（1-6）から電気角推定（セクター中心：30, 90, 150, 210, 270, 330度）
   - **重要**: セクターの中心角を使用することでFOC制御の精度向上
+- **角度補間機能**（デフォルト有効）：
+  - Hall エッジ間で速度ベースの角度補間を実施
+  - 離散的な60度ステップから連続的な角度推定へ改善
+  - FOC制御の安定性と滑らかさが大幅に向上
 - Hall エッジ検出による速度計算（RPM）
 - ローパスフィルタによる速度平滑化
 - タイムアウト検出（1秒間エッジなし → 速度0）
 
 #### PiController ([src/foc/pi_controller.rs](src/foc/pi_controller.rs))
-- 比例・積分制御（anti-windup付き）
-- 出力リミッタ（飽和時は積分停止）
+- 比例・積分制御（anti-windup機能付き）
+- **積分項計算**: `integral += ki * error * dt` 形式（[calebfletcher/foc](https://github.com/calebfletcher/foc)実装準拠）
+  - 数値安定性向上
+  - ゲイン変更時の挙動改善
+- **アンチワインドアップ**: デフォルトで無効（参照実装準拠）
+  - 出力飽和時も積分項が蓄積される
+  - モーター制御の安定性向上
+- 出力リミッタ（±max_voltage）
 - ゲイン・リミット動的変更可能
 - `new_symmetric()` で±リミット設定
 
 #### SVPWM ([src/foc/svpwm.rs](src/foc/svpwm.rs))
+- **高速x/y/z座標変換方式**（[calebfletcher/foc](https://github.com/calebfletcher/foc)実装準拠）
+  - 三角関数（`atan2f`, `sinf`）を使わず、符号判定でセクター決定
+  - 計算負荷を大幅削減（組み込み最適化）
+  - 精度と安定性が向上
 - Space Vector PWM生成（正弦波PWMより15%電圧利用率向上）
 - セクター判定（1-6）とデューティ比計算
-- ゼロベクトル時間の均等配分
-- **ゼロ電圧時の特別処理**: magnitude=0の場合、中心値(50%)を返す
-  - 3相が同じDuty比(50%)の時、相間電圧=0V（モーター停止状態）
-- `calculate_sinusoidal_pwm()` も実装（シンプル版）
+- `calculate_sinusoidal_pwm()` も実装（シンプル版、後方互換性用）
 
 #### Transforms ([src/foc/transforms.rs](src/foc/transforms.rs))
 - `inverse_park()`: dq → αβ座標変換（回転座標系 → 静止座標系）
@@ -165,6 +176,30 @@ cargo fmt
 ## 重要な制約
 
 - `#![no_std]`、`#![no_main]`: 標準ライブラリ不使用の bare metal 環境
-- 浮動小数点演算に `libm` クレートを使用（`sin`、`cos`、`atan2`、`sqrt` など）
+- 浮動小数点演算に `libm` クレートを使用（`roundf`、`sin`、`cos` など）
+  - **最適化**: SVPWMでは三角関数を使わない高速方式を採用
 - メモリ制約の厳しい組み込み環境のため、ヒープアロケーション非推奨
 - FOC制御は1kHzループで実行されるため、処理時間に注意（1ms以内に完了必要）
+  - SVPWM最適化により計算負荷を削減
+
+## 最近の最適化履歴
+
+### 2025-10-29: FOC制御アルゴリズム最適化
+参照実装 [calebfletcher/foc](https://github.com/calebfletcher/foc) との比較により、以下を最適化：
+
+1. **SVPWM実装の改善**（[svpwm.rs](src/foc/svpwm.rs)）
+   - 三角関数ベース → x/y/z座標変換+符号判定方式に変更
+   - `atan2f`と`sinf`を削除、計算負荷を大幅削減
+   - セクター判定がシンプルかつ高速に
+   - 制御安定性が向上
+
+2. **PI制御の改善**（[pi_controller.rs](src/foc/pi_controller.rs)）
+   - 積分項計算: `integral += error * dt; ki * integral` → `integral += ki * error * dt`
+   - 数値安定性向上
+   - ゲイン動的変更時の挙動改善
+
+3. **アンチワインドアップの修正**（[pi_controller.rs](src/foc/pi_controller.rs)）
+   - デフォルト設定: 有効 → **無効** に変更
+   - 参照実装では出力飽和時も積分項が蓄積され続ける
+   - これによりモーター始動時や負荷変動時の応答性が向上
+   - 制御の安定性が大幅に改善

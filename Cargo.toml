@@ -20,6 +20,7 @@ embedded-can = "0.4"
 panic-halt = "1.0.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
 libm = "0.2.15"
+idsp = { version = "0.19.0", default-features = false }
 
 [[bin]]
 name = "g4-driver"

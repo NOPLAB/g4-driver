@@ -47,18 +47,19 @@ bind_interrupts!(struct Irqs {
 });
 
 // モーター制御パラメータ（デフォルト値）
-const DEFAULT_SPEED_KP: f32 = 0.1;
-const DEFAULT_SPEED_KI: f32 = 0.01;
+// 角度補間により制御精度が向上したため、ゲインを最適化
+const DEFAULT_SPEED_KP: f32 = 0.5; // 比例ゲイン（オーバーシュート抑制）
+const DEFAULT_SPEED_KI: f32 = 0.05; // 積分ゲイン（ワインドアップ抑制）
 const MAX_VOLTAGE: f32 = 24.0; // V
 const V_DC_BUS: f32 = 24.0; // V (DC bus voltage)
 const POLE_PAIRS: u8 = 6; // 極対数（ポール数12 / 2 = 6）
 const CONTROL_PERIOD_US: u64 = 1000; // 1kHz = 1000μs (1ms)
 const MAX_DUTY: u16 = 100;
-const SPEED_FILTER_ALPHA: f32 = 0.2; // ホールセンサ速度フィルタ係数
+const SPEED_FILTER_ALPHA: f32 = 0.1; // ホールセンサ速度フィルタ係数（滑らかな速度推定のため低減）
 
 // オープンループ始動パラメータ（6ステップ駆動）
 const OPENLOOP_INITIAL_RPM: f32 = 30.0; // 初期回転数 [RPM]
-const OPENLOOP_TARGET_RPM: f32 = 200.0; // FOC切替回転数 [RPM]
+const OPENLOOP_TARGET_RPM: f32 = 500.0; // FOC切替回転数 [RPM]
 const OPENLOOP_ACCELERATION_RPM_PER_S: f32 = 50.0; // 加速度 [RPM/s]
 const OPENLOOP_DUTY_RATIO: u16 = 50; // デューティ比 (0-100)
 
@@ -264,18 +265,10 @@ pub async fn motor_control_task(
             was_enabled = true;
         }
 
-        // 2. ホールセンサ読み取り（PB6=H1, PB7=H2, PB8=H3）
-        let h1 = hall_h1.is_high();
-        let h2 = hall_h2.is_high();
-        let h3 = hall_h3.is_high();
-        let hall_state = (h3 as u8) << 2 | (h2 as u8) << 1 | (h1 as u8);
-
-        // 3. 電気角・速度推定（FOCモードで使用）
-        let (hall_electrical_angle, speed_rpm) = hall_sensor.update(hall_state, dt);
-
-        // 4. 制御モードに応じた処理
+        // 2. 制御モードに応じた処理
         match control_mode {
             ControlMode::OpenLoop => {
+                // オープンループモード時はホールセンサを使用しない（チャタリング回避）
                 // オープンループ6ステップ駆動
                 let step_state = open_loop.update(dt);
                 let openloop_rpm = open_loop.get_current_rpm();
@@ -287,6 +280,8 @@ pub async fn motor_control_task(
                         openloop_rpm
                     );
                     control_mode = ControlMode::ClosedLoopFoc;
+                    // FOCモードに切り替え時、ホールセンサをリセット
+                    hall_sensor.reset();
                 }
 
                 // 6ステップ駆動のPWM設定
@@ -322,6 +317,15 @@ pub async fn motor_control_task(
             ControlMode::ClosedLoopFoc => {
                 // クローズドループFOC制御
 
+                // ホールセンサ読み取り（PB6=H1, PB7=H2, PB8=H3）
+                let h1 = hall_h1.is_high();
+                let h2 = hall_h2.is_high();
+                let h3 = hall_h3.is_high();
+                let hall_state = (h3 as u8) << 2 | (h2 as u8) << 1 | (h1 as u8);
+
+                // 電気角・速度推定
+                let (hall_electrical_angle, speed_rpm) = hall_sensor.update(hall_state, dt);
+
                 // PIゲイン更新チェック（非同期で更新された場合）
                 {
                     let (kp, ki) = *SPEED_PI_GAINS.lock().await;
@@ -346,6 +350,19 @@ pub async fn motor_control_task(
 
                 // SVPWM計算
                 let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, V_DC_BUS, MAX_DUTY);
+
+                // デバッグ用：FOC制御の詳細ログ（10Hz = 100回に1回）
+                static mut FOC_LOG_COUNTER: u32 = 0;
+                unsafe {
+                    FOC_LOG_COUNTER += 1;
+                    if FOC_LOG_COUNTER >= 100 {
+                        FOC_LOG_COUNTER = 0;
+                        trace!(
+                            "[FOC Detail] Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}, Angle={}rad",
+                            vq_limited, v_alpha, v_beta, duty_u, duty_v, duty_w, hall_electrical_angle
+                        );
+                    }
+                }
 
                 // PWM出力
                 uvw_pwm.set_duty(Channel::Ch1, duty_u);
@@ -377,15 +394,25 @@ pub async fn motor_control_task(
                     ControlMode::OpenLoop => {
                         let openloop_rpm = open_loop.get_current_rpm();
                         debug!(
-                            "[OpenLoop 6-Step] RPM: {}, Step: {}",
-                            openloop_rpm, open_loop.get_current_step()
+                            "[OpenLoop 6-Step] RPM: {}, Step: {}, Target: {} RPM (no Hall sensor)",
+                            openloop_rpm,
+                            open_loop.get_current_step(),
+                            OPENLOOP_TARGET_RPM
                         );
                     }
                     ControlMode::ClosedLoopFoc => {
+                        // ホールセンサ値を再取得（ログ用）
+                        let h1 = hall_h1.is_high();
+                        let h2 = hall_h2.is_high();
+                        let h3 = hall_h3.is_high();
+                        let hall_state = (h3 as u8) << 2 | (h2 as u8) << 1 | (h1 as u8);
+
+                        // 最新のステータスを取得
+                        let status = *MOTOR_STATUS.lock().await;
                         let target_speed = *TARGET_SPEED.lock().await;
                         debug!(
                             "[FOC] Speed: {}/{} RPM, Angle: {}rad, Hall: {}",
-                            speed_rpm, target_speed, hall_electrical_angle, hall_state
+                            status.speed_rpm, target_speed, status.electrical_angle, hall_state
                         );
                     }
                 }

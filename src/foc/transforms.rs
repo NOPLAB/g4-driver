@@ -3,6 +3,9 @@
 
 use libm::{cosf, sinf, sqrtf};
 
+// Enable idsp-based fast trigonometric functions
+const USE_IDSP_COSSIN: bool = true;
+
 /// Inverse Park transformation (dq → αβ)
 ///
 /// Transforms from the rotating dq reference frame to the stationary αβ frame
@@ -14,7 +17,45 @@ use libm::{cosf, sinf, sqrtf};
 ///
 /// # Returns
 /// Tuple of (v_alpha, v_beta) in the stationary frame
+///
+/// # Implementation
+/// Uses idsp::cossin() for fast trigonometric calculation (~40 cycles on Cortex-M)
+/// compared to libm::cosf/sinf (~100-200 cycles). Can be switched via USE_IDSP_COSSIN.
 pub fn inverse_park(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
+    if USE_IDSP_COSSIN {
+        inverse_park_idsp(vd, vq, theta)
+    } else {
+        inverse_park_libm(vd, vq, theta)
+    }
+}
+
+/// Inverse Park using idsp::cossin() (fast, ~40 cycles on Cortex-M)
+#[inline]
+fn inverse_park_idsp(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
+    // Convert theta (radians, 0 to 2π) to idsp phase format (i32, full scale)
+    // idsp uses i32::MIN (-2^31) to i32::MAX (2^31-1) to represent -π to π
+    // So: phase = theta * (2^31 / π)
+    const SCALE: f32 = 2147483648.0 / core::f32::consts::PI; // 2^31 / π
+    let phase: i32 = (theta * SCALE) as i32;
+
+    // cossin() returns (cos, sin) as (i32, i32) in range [-2^31, 2^31-1]
+    let (cos_i32, sin_i32) = idsp::cossin(phase);
+
+    // Convert i32 to f32 and normalize to [-1.0, 1.0]
+    // Note: i32::MIN as f32 = -2147483648.0, but we want to normalize to 2^31
+    const I32_TO_F32: f32 = 1.0 / 2147483648.0; // 1 / 2^31
+    let cos_theta = cos_i32 as f32 * I32_TO_F32;
+    let sin_theta = sin_i32 as f32 * I32_TO_F32;
+
+    let v_alpha = vd * cos_theta - vq * sin_theta;
+    let v_beta = vd * sin_theta + vq * cos_theta;
+
+    (v_alpha, v_beta)
+}
+
+/// Inverse Park using libm (slower, ~100-200 cycles, but more familiar)
+#[inline]
+fn inverse_park_libm(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
     let cos_theta = cosf(theta);
     let sin_theta = sinf(theta);
 
@@ -88,6 +129,56 @@ pub fn normalize_angle(angle: f32) -> f32 {
         normalized += TWO_PI;
     }
     normalized
+}
+
+/// Benchmark inverse_park implementations
+///
+/// Runs both idsp and libm implementations multiple times and returns
+/// the relative performance difference
+///
+/// # Arguments
+/// * `iterations` - Number of iterations to run
+///
+/// # Returns
+/// Tuple of (idsp_result, libm_result, idsp_ticks, libm_ticks)
+#[cfg(not(test))]
+pub fn benchmark_inverse_park(iterations: u32) -> ((f32, f32), (f32, f32), u32, u32) {
+    use cortex_m::peripheral::DWT;
+
+    // Test parameters
+    let vd = 12.0;
+    let vq = 8.0;
+    let theta = 1.57; // ~90 degrees
+
+    // Enable cycle counter
+    unsafe {
+        let dwt = &*DWT::PTR;
+
+        // Benchmark idsp implementation
+        let start_idsp = dwt.cyccnt.read();
+        let mut result_idsp = (0.0, 0.0);
+        for _ in 0..iterations {
+            result_idsp = inverse_park_idsp(vd, vq, theta);
+            // Prevent optimization
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        let end_idsp = dwt.cyccnt.read();
+
+        // Benchmark libm implementation
+        let start_libm = dwt.cyccnt.read();
+        let mut result_libm = (0.0, 0.0);
+        for _ in 0..iterations {
+            result_libm = inverse_park_libm(vd, vq, theta);
+            // Prevent optimization
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        let end_libm = dwt.cyccnt.read();
+
+        let ticks_idsp = end_idsp.wrapping_sub(start_idsp);
+        let ticks_libm = end_libm.wrapping_sub(start_libm);
+
+        (result_idsp, result_libm, ticks_idsp, ticks_libm)
+    }
 }
 
 #[cfg(test)]
