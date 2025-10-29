@@ -53,7 +53,7 @@ const DEFAULT_SPEED_KI: f32 = 0.05; // 積分ゲイン（ワインドアップ�
 const MAX_VOLTAGE: f32 = 24.0; // V
 const V_DC_BUS: f32 = 24.0; // V (DC bus voltage)
 const POLE_PAIRS: u8 = 6; // 極対数（ポール数12 / 2 = 6）
-const CONTROL_PERIOD_US: u64 = 1000; // 1kHz = 1000μs (1ms)
+const CONTROL_PERIOD_US: u64 = 400; // 2.5kHz = 400μs
 const MAX_DUTY: u16 = 100;
 const SPEED_FILTER_ALPHA: f32 = 0.1; // ホールセンサ速度フィルタ係数（滑らかな速度推定のため低減）
 
@@ -177,7 +177,7 @@ pub async fn led_task(
     }
 }
 
-// モーター制御タスク（1kHz FOCループ + オープンループ始動）
+// モーター制御タスク（2.5kHz FOCループ + オープンループ始動）
 #[embassy_executor::task]
 pub async fn motor_control_task(
     hall_h1: Input<'static>,
@@ -351,11 +351,11 @@ pub async fn motor_control_task(
                 // SVPWM計算
                 let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, V_DC_BUS, MAX_DUTY);
 
-                // デバッグ用：FOC制御の詳細ログ（10Hz = 100回に1回）
+                // デバッグ用：FOC制御の詳細ログ（10Hz = 250回に1回）
                 static mut FOC_LOG_COUNTER: u32 = 0;
                 unsafe {
                     FOC_LOG_COUNTER += 1;
-                    if FOC_LOG_COUNTER >= 100 {
+                    if FOC_LOG_COUNTER >= 250 {
                         FOC_LOG_COUNTER = 0;
                         trace!(
                             "[FOC Detail] Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}, Angle={}rad",
@@ -387,8 +387,8 @@ pub async fn motor_control_task(
         static mut LOG_COUNTER: u32 = 0;
         unsafe {
             LOG_COUNTER += 1;
-            if LOG_COUNTER >= 1000 {
-                // 1秒ごと（1kHz / 1000 = 1Hz）
+            if LOG_COUNTER >= 2500 {
+                // 1秒ごと（2.5kHz / 2500 = 1Hz）
                 LOG_COUNTER = 0;
                 match control_mode {
                     ControlMode::OpenLoop => {
@@ -552,6 +552,57 @@ async fn main(spawner: Spawner) {
     let hall_h2 = Input::new(p.PB7, Pull::None);
     let hall_h3 = Input::new(p.PB8, Pull::None);
 
+    // ================================================================================
+    // ベンチマーク: inverse_park() パフォーマンス測定
+    // ================================================================================
+    info!("Running inverse_park() benchmark...");
+
+    // DWT (Data Watchpoint and Trace) サイクルカウンタを有効化
+    unsafe {
+        let mut cp = cortex_m::Peripherals::steal();
+        cp.DCB.enable_trace();
+        cp.DWT.enable_cycle_counter();
+    }
+
+    // ベンチマーク実行（1000回イテレーション）
+    let iterations = 1000u32;
+    let (result_idsp, result_libm, ticks_idsp, ticks_libm) =
+        foc::benchmark_inverse_park(iterations);
+
+    // サイクル/呼び出し を計算（整数に変換してdefmtで表示）
+    let cycles_per_call_idsp = ticks_idsp / iterations;
+    let cycles_per_call_libm = ticks_libm / iterations;
+    let speedup_x10 = (cycles_per_call_libm * 10) / cycles_per_call_idsp; // 10倍してdefmtで表示
+
+    info!("Benchmark results ({} iterations):", iterations);
+    info!(
+        "  idsp::cossin():  {} cycles total, {} cycles/call",
+        ticks_idsp, cycles_per_call_idsp
+    );
+    info!(
+        "  libm::cosf/sinf: {} cycles total, {} cycles/call",
+        ticks_libm, cycles_per_call_libm
+    );
+    info!(
+        "  Speedup: {}.{}x faster with idsp",
+        speedup_x10 / 10,
+        speedup_x10 % 10
+    );
+    info!(
+        "  Result idsp:  alpha={}, beta={}",
+        result_idsp.0, result_idsp.1
+    );
+    info!(
+        "  Result libm:  alpha={}, beta={}",
+        result_libm.0, result_libm.1
+    );
+    info!(
+        "  Error: alpha={}, beta={}",
+        result_idsp.0 - result_libm.0,
+        result_idsp.1 - result_libm.1
+    );
+    // ================================================================================
+
     info!("Starting FOC motor control...");
 
     // モーター制御タスクを起動
@@ -569,9 +620,9 @@ async fn main(spawner: Spawner) {
     // メインループ（オプション：ADC値の監視など）
     loop {
         // 電流センサ値の読み取り（現在は使用していないが、将来のために残す）
-        let _op1_val = adc1.blocking_read(&mut op1_adc_ch);
+        /* let _op1_val = adc1.blocking_read(&mut op1_adc_ch);
         let _op2_val = adc2.blocking_read(&mut op2_adc_ch);
-        let _op3_val = adc1.blocking_read(&mut op3_adc_ch);
+        let _op3_val = adc1.blocking_read(&mut op3_adc_ch); */
 
         // 将来の拡張用（電流リミット監視など）
         Timer::after(Duration::from_millis(100)).await;
