@@ -16,6 +16,9 @@ pub mod can_ids {
     /// Motor status feedback (speed: f32, angle: f32, 8 bytes)
     pub const STATUS: u32 = 0x200;
 
+    /// Voltage status feedback (voltage: f32, flags: u8, 5 bytes)
+    pub const VOLTAGE_STATUS: u32 = 0x201;
+
     /// Emergency stop (any data length)
     pub const EMERGENCY_STOP: u32 = 0x000;
 }
@@ -148,6 +151,60 @@ pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
         speed_rpm,
         electrical_angle,
     })
+}
+
+/// Encode voltage status into CAN data
+///
+/// # Arguments
+/// * `voltage` - DC bus voltage in volts
+/// * `overvoltage` - Overvoltage flag
+/// * `undervoltage` - Undervoltage flag
+///
+/// # Returns
+/// 5-byte array containing encoded voltage status
+pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool) -> [u8; 5] {
+    let mut data = [0u8; 5];
+
+    // Encode voltage as little-endian f32 (bytes 0-3)
+    let voltage_bytes = voltage.to_le_bytes();
+    data[0..4].copy_from_slice(&voltage_bytes);
+
+    // Encode flags (byte 4)
+    // Bit 0: overvoltage
+    // Bit 1: undervoltage
+    let mut flags = 0u8;
+    if overvoltage {
+        flags |= 0x01;
+    }
+    if undervoltage {
+        flags |= 0x02;
+    }
+    data[4] = flags;
+
+    data
+}
+
+/// Decode voltage status from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be at least 5 bytes)
+///
+/// # Returns
+/// * `Some((voltage, overvoltage, undervoltage))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn decode_voltage_status(data: &[u8]) -> Option<(f32, bool, bool)> {
+    if data.len() < 5 {
+        return None;
+    }
+
+    let voltage_bytes = [data[0], data[1], data[2], data[3]];
+    let voltage = f32::from_le_bytes(voltage_bytes);
+
+    let flags = data[4];
+    let overvoltage = (flags & 0x01) != 0;
+    let undervoltage = (flags & 0x02) != 0;
+
+    Some((voltage, overvoltage, undervoltage))
 }
 
 #[cfg(test)]
