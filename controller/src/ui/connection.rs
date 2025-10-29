@@ -35,16 +35,57 @@ pub fn ConnectionBar() -> Element {
         } else {
             // Connect
             let interface = app_state.read().interface.clone();
-            info!("Connecting to CAN interface: {}", interface);
+            info!("Connecting to device: {}", interface);
             app_state.write().connection_state = ConnectionState::Connecting;
 
-            let can_manager = app_state.read().can_manager.clone();
             spawn(async move {
+                // Check if the selected interface is a USB device (starts with /dev/)
+                let is_usb_device = interface.starts_with("/dev/");
+
+                let actual_interface = if is_usb_device {
+                    // USB device - setup SLCAN first
+                    info!("USB device detected: {}", interface);
+                    info!("Setting up SLCAN interface automatically...");
+
+                    match can::setup_slcan_interface(&interface, "slcan0", 250000) {
+                        Ok(_) => {
+                            info!("SLCAN interface setup successful");
+
+                            // Wait a bit for interface to be ready
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                            // Refresh interfaces to show the new slcan0
+                            refresh_interfaces(app_state).await;
+
+                            "slcan0".to_string()
+                        }
+                        Err(e) => {
+                            error!("SLCAN setup failed: {}", e);
+                            app_state.write().connection_state = ConnectionState::Error(format!(
+                                "SLCAN setup failed: {}. Try running with sudo privileges.",
+                                e
+                            ));
+                            return;
+                        }
+                    }
+                } else {
+                    // Regular CAN interface
+                    interface.clone()
+                };
+
+                // Connect to the CAN interface
+                info!("Connecting to CAN interface: {}", actual_interface);
+                let can_manager = app_state.read().can_manager.clone();
                 let mut manager = can_manager.lock().await;
-                match manager.connect(&interface).await {
+                match manager.connect(&actual_interface).await {
                     Ok(_) => {
                         app_state.write().connection_state = ConnectionState::Connected;
-                        info!("Connected successfully");
+                        info!("Connected successfully to {}", actual_interface);
+
+                        // Update interface name to the actual interface (slcan0 if USB was used)
+                        if is_usb_device {
+                            app_state.write().interface = actual_interface.clone();
+                        }
 
                         // Start CAN receive task
                         spawn(can_receive_task(app_state));
@@ -68,13 +109,6 @@ pub fn ConnectionBar() -> Element {
     let on_refresh_interfaces = move |_| {
         spawn(async move {
             refresh_interfaces(app_state).await;
-        });
-    };
-
-    // Setup SLCAN button
-    let on_setup_slcan = move |_| {
-        spawn(async move {
-            setup_slcan_dialog(app_state).await;
         });
     };
 
@@ -111,33 +145,52 @@ pub fn ConnectionBar() -> Element {
                 // Spacer
                 div { style: "flex: 1;" }
 
-                // Interface selection
+                // Interface selection (CAN interfaces + USB devices)
                 div {
                     style: "display: flex; align-items: center; gap: 8px;",
                     label {
                         style: "font-size: 14px; color: #555;",
-                        "Interface:"
+                        "Device:"
                     }
                     select {
-                        style: "padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
+                        style: "padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; min-width: 200px;",
                         value: "{state.interface}",
                         onchange: on_interface_change,
                         disabled: matches!(state.connection_state, ConnectionState::Connected | ConnectionState::Connecting),
 
-                        if state.available_interfaces.is_empty() {
-                            option { value: "can0", "can0" }
-                            option { value: "vcan0", "vcan0" }
-                            option { value: "slcan0", "slcan0" }
-                        } else {
-                            for interface in &state.available_interfaces {
-                                {
-                                    let status = if interface.is_up { "(UP)" } else { "(DOWN)" };
-                                    let display_text = format!("{} {}", interface.name, status);
-                                    rsx! {
-                                        option {
-                                            value: "{interface.name}",
-                                            "{display_text}"
+                        // CAN Interfaces group
+                        if !state.available_interfaces.is_empty() {
+                            optgroup {
+                                label: "CAN Interfaces",
+                                for interface in &state.available_interfaces {
+                                    {
+                                        let status = if interface.is_up { "UP" } else { "DOWN" };
+                                        let display_text = format!("{} ({})", interface.name, status);
+                                        rsx! {
+                                            option {
+                                                value: "{interface.name}",
+                                                "{display_text}"
+                                            }
                                         }
+                                    }
+                                }
+                            }
+                        } else {
+                            optgroup {
+                                label: "CAN Interfaces",
+                                option { value: "can0", "can0 (default)" }
+                                option { value: "vcan0", "vcan0 (default)" }
+                            }
+                        }
+
+                        // USB Devices group
+                        if !state.available_usb_devices.is_empty() {
+                            optgroup {
+                                label: "USB-CAN Adapters (auto-setup SLCAN)",
+                                for device in &state.available_usb_devices {
+                                    option {
+                                        value: "{device.device_path}",
+                                        "{device.device_path} - {device.description}"
                                     }
                                 }
                             }
@@ -151,14 +204,6 @@ pub fn ConnectionBar() -> Element {
                     onclick: on_refresh_interfaces,
                     disabled: matches!(state.connection_state, ConnectionState::Connecting),
                     "🔄 Refresh"
-                }
-
-                // Setup SLCAN button
-                button {
-                    style: "padding: 6px 12px; border: 1px solid #28a745; background: white; color: #28a745; cursor: pointer; border-radius: 4px; font-size: 13px;",
-                    onclick: on_setup_slcan,
-                    disabled: matches!(state.connection_state, ConnectionState::Connected | ConnectionState::Connecting),
-                    "⚙️ Setup SLCAN"
                 }
 
                 // Connect/Disconnect button
@@ -182,26 +227,6 @@ pub fn ConnectionBar() -> Element {
                     span {
                         style: "font-size: 14px; color: #333;",
                         "{status_text}"
-                    }
-                }
-            }
-
-            // USB devices info bar (only show if devices detected)
-            if !state.available_usb_devices.is_empty() {
-                div {
-                    style: "padding: 8px 20px; background: #e3f2fd; border-top: 1px solid #90caf9; font-size: 13px;",
-                    span {
-                        style: "color: #1976d2; font-weight: 500;",
-                        "📡 USB-CAN Devices: "
-                    }
-                    for (idx, device) in state.available_usb_devices.iter().enumerate() {
-                        if idx > 0 {
-                            span { ", " }
-                        }
-                        span {
-                            style: "color: #555;",
-                            "{device.device_path}"
-                        }
                     }
                 }
             }
@@ -238,43 +263,6 @@ async fn refresh_interfaces(mut app_state: Signal<AppState>) {
     app_state.write().available_usb_devices = usb_devices;
 }
 
-/// Setup SLCAN interface from USB device
-async fn setup_slcan_dialog(mut app_state: Signal<AppState>) {
-    info!("Setting up SLCAN interface");
-
-    let usb_devices = app_state.read().available_usb_devices.clone();
-
-    if usb_devices.is_empty() {
-        error!("No USB-CAN devices found");
-        app_state.write().connection_state =
-            ConnectionState::Error("No USB-CAN devices found. Please connect a CANUSB adapter.".to_string());
-        return;
-    }
-
-    // Use first available device
-    let device = &usb_devices[0];
-    info!("Using device: {}", device.device_path);
-
-    // Setup slcan0 interface at 250kbps (matching firmware config)
-    let device_path = device.device_path.clone();
-    match can::setup_slcan_interface(&device_path, "slcan0", 250000) {
-        Ok(_) => {
-            info!("SLCAN interface setup successful");
-
-            // Refresh interfaces to show the new slcan0
-            refresh_interfaces(app_state).await;
-
-            // Automatically select slcan0
-            app_state.write().interface = "slcan0".to_string();
-        }
-        Err(e) => {
-            error!("SLCAN setup failed: {}", e);
-            app_state.write().connection_state =
-                ConnectionState::Error(format!("SLCAN setup failed: {}. Try running with sudo privileges.", e));
-        }
-    }
-}
-
 /// Background task to receive CAN messages
 async fn can_receive_task(mut app_state: Signal<AppState>) {
     info!("CAN receive task started");
@@ -283,7 +271,10 @@ async fn can_receive_task(mut app_state: Signal<AppState>) {
         let manager = app_state.read().can_manager.clone();
 
         // Check if still connected
-        if !matches!(app_state.read().connection_state, ConnectionState::Connected) {
+        if !matches!(
+            app_state.read().connection_state,
+            ConnectionState::Connected
+        ) {
             info!("CAN receive task stopped: not connected");
             break;
         }

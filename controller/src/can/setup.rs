@@ -23,9 +23,9 @@ pub struct CanInterface {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterfaceType {
-    Hardware,  // Hardware CAN (can0, can1)
-    Virtual,   // Virtual CAN (vcan0, vcan1)
-    Slcan,     // Serial line CAN (slcan0, slcan1)
+    Hardware, // Hardware CAN (can0, can1)
+    Virtual,  // Virtual CAN (vcan0, vcan1)
+    Slcan,    // Serial line CAN (slcan0, slcan1)
 }
 
 /// Detect available USB-CAN adapters (serial devices)
@@ -91,9 +91,7 @@ pub fn detect_can_interfaces() -> Result<Vec<CanInterface>> {
                 let name = after_number[..second_colon].trim();
 
                 // Filter for CAN interfaces
-                if name.starts_with("can")
-                    || name.starts_with("vcan")
-                    || name.starts_with("slcan")
+                if name.starts_with("can") || name.starts_with("vcan") || name.starts_with("slcan")
                 {
                     let is_up = line.contains("UP");
                     let interface_type = if name.starts_with("vcan") {
@@ -130,11 +128,7 @@ pub fn detect_can_interfaces() -> Result<Vec<CanInterface>> {
 /// This function:
 /// 1. Runs slcand to create the slcan interface
 /// 2. Brings up the interface with ip link set up
-pub fn setup_slcan_interface(
-    device_path: &str,
-    interface_name: &str,
-    bitrate: u32,
-) -> Result<()> {
+pub fn setup_slcan_interface(device_path: &str, interface_name: &str, bitrate: u32) -> Result<()> {
     info!(
         "Setting up slcan interface {} from device {} at {} bps",
         interface_name, device_path, bitrate
@@ -148,7 +142,10 @@ pub fn setup_slcan_interface(
     // Check if interface already exists
     if let Ok(interfaces) = detect_can_interfaces() {
         if interfaces.iter().any(|i| i.name == interface_name) {
-            warn!("Interface {} already exists, cleaning up first", interface_name);
+            warn!(
+                "Interface {} already exists, cleaning up first",
+                interface_name
+            );
             // Try to clean up existing interface
             let _ = cleanup_slcan_interface(interface_name);
         }
@@ -174,7 +171,10 @@ pub fn setup_slcan_interface(
     // -c: close device on exit
     // -s: speed parameter
     // -S: baudrate (default 115200)
-    info!("Running: slcand -o -c -s{} {} {}", speed_param, device_path, interface_name);
+    info!(
+        "Running: slcand -o -c -s{} {} {}",
+        speed_param, device_path, interface_name
+    );
 
     let output = Command::new("sudo")
         .args([

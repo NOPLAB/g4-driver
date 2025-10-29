@@ -3,7 +3,7 @@ use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
-use tokio_socketcan::{CANSocket, CANFrame};
+use tokio_socketcan::{CANFrame, CANSocket};
 use tracing::{debug, info};
 
 use super::protocol::{self, can_ids, MotorStatus, VoltageStatus};
@@ -107,6 +107,114 @@ impl CanManager {
     pub async fn send_reset_config(&self) -> Result<()> {
         info!("Sending reset config command");
         self.send_frame(can_ids::RESET_CONFIG, &[]).await
+    }
+
+    // ========================================================================
+    // Motor Control Parameter Commands
+    // ========================================================================
+
+    /// Send motor voltage parameters
+    ///
+    /// # Arguments
+    /// * `max_voltage` - Maximum voltage in volts
+    /// * `v_dc_bus` - DC bus voltage in volts
+    pub async fn send_motor_voltage_params(&self, max_voltage: f32, v_dc_bus: f32) -> Result<()> {
+        let data = protocol::encode_motor_voltage_params(max_voltage, v_dc_bus);
+        self.send_frame(can_ids::MOTOR_VOLTAGE_PARAMS, &data).await
+    }
+
+    /// Send motor basic parameters
+    ///
+    /// # Arguments
+    /// * `pole_pairs` - Number of pole pairs
+    /// * `max_duty` - Maximum duty cycle
+    pub async fn send_motor_basic_params(&self, pole_pairs: u8, max_duty: u16) -> Result<()> {
+        let data = protocol::encode_motor_basic_params(pole_pairs, max_duty);
+        self.send_frame(can_ids::MOTOR_BASIC_PARAMS, &data).await
+    }
+
+    /// Send hall sensor parameters
+    ///
+    /// # Arguments
+    /// * `speed_filter_alpha` - Speed filter alpha coefficient
+    /// * `hall_angle_offset` - Hall angle offset in radians
+    pub async fn send_hall_sensor_params(
+        &self,
+        speed_filter_alpha: f32,
+        hall_angle_offset: f32,
+    ) -> Result<()> {
+        let data = protocol::encode_hall_sensor_params(speed_filter_alpha, hall_angle_offset);
+        self.send_frame(can_ids::HALL_SENSOR_PARAMS, &data).await
+    }
+
+    /// Send angle interpolation enable/disable
+    ///
+    /// # Arguments
+    /// * `enable` - Enable angle interpolation
+    pub async fn send_angle_interpolation(&self, enable: bool) -> Result<()> {
+        let data = protocol::encode_angle_interpolation(enable);
+        self.send_frame(can_ids::ANGLE_INTERPOLATION, &data).await
+    }
+
+    // ========================================================================
+    // OpenLoop Parameter Commands
+    // ========================================================================
+
+    /// Send openloop RPM parameters
+    ///
+    /// # Arguments
+    /// * `initial_rpm` - Initial RPM for openloop ramp-up
+    /// * `target_rpm` - Target RPM for switching to FOC
+    pub async fn send_openloop_rpm_params(&self, initial_rpm: f32, target_rpm: f32) -> Result<()> {
+        let data = protocol::encode_openloop_rpm_params(initial_rpm, target_rpm);
+        self.send_frame(can_ids::OPENLOOP_RPM_PARAMS, &data).await
+    }
+
+    /// Send openloop acceleration and duty parameters
+    ///
+    /// # Arguments
+    /// * `acceleration` - Acceleration in RPM/s
+    /// * `duty_ratio` - Duty ratio (0-100)
+    pub async fn send_openloop_accel_duty_params(
+        &self,
+        acceleration: f32,
+        duty_ratio: u16,
+    ) -> Result<()> {
+        let data = protocol::encode_openloop_accel_duty_params(acceleration, duty_ratio);
+        self.send_frame(can_ids::OPENLOOP_ACCEL_DUTY_PARAMS, &data)
+            .await
+    }
+
+    // ========================================================================
+    // PWM/CAN/Timing Configuration Commands
+    // ========================================================================
+
+    /// Send PWM configuration
+    ///
+    /// # Arguments
+    /// * `frequency` - PWM frequency in Hz
+    /// * `dead_time` - Dead time value
+    pub async fn send_pwm_config(&self, frequency: u32, dead_time: u16) -> Result<()> {
+        let data = protocol::encode_pwm_config(frequency, dead_time);
+        self.send_frame(can_ids::PWM_CONFIG, &data).await
+    }
+
+    /// Send CAN configuration
+    ///
+    /// # Arguments
+    /// * `bitrate` - CAN bitrate in bps
+    pub async fn send_can_config(&self, bitrate: u32) -> Result<()> {
+        let data = protocol::encode_can_config(bitrate);
+        self.send_frame(can_ids::CAN_CONFIG, &data).await
+    }
+
+    /// Send control timing configuration
+    ///
+    /// # Arguments
+    /// * `control_period_us` - Control period in microseconds
+    pub async fn send_control_timing(&self, control_period_us: u64) -> Result<()> {
+        let data = protocol::encode_control_timing(control_period_us);
+        self.send_frame(can_ids::CONTROL_TIMING, &data).await
     }
 
     /// Receive next CAN frame with timeout

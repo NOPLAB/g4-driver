@@ -21,6 +21,38 @@ pub mod can_ids {
     /// Reset config to defaults command (no data)
     pub const RESET_CONFIG: u32 = 0x105;
 
+    // === Motor Control Parameter Commands (0x110-0x113) ===
+    /// Motor voltage params (max_voltage: f32, v_dc_bus: f32, 8 bytes)
+    pub const MOTOR_VOLTAGE_PARAMS: u32 = 0x110;
+
+    /// Motor basic params (pole_pairs: u8, max_duty: u16, 3 bytes)
+    pub const MOTOR_BASIC_PARAMS: u32 = 0x111;
+
+    /// Hall sensor params (speed_filter_alpha: f32, hall_angle_offset: f32, 8 bytes)
+    pub const HALL_SENSOR_PARAMS: u32 = 0x112;
+
+    /// Angle interpolation (enable_angle_interpolation: bool, 1 byte)
+    pub const ANGLE_INTERPOLATION: u32 = 0x113;
+
+    // === OpenLoop Parameter Commands (0x120-0x121) ===
+    /// OpenLoop RPM params (initial_rpm: f32, target_rpm: f32, 8 bytes)
+    pub const OPENLOOP_RPM_PARAMS: u32 = 0x120;
+
+    /// OpenLoop accel/duty params (acceleration: f32, duty_ratio: u16, 6 bytes)
+    pub const OPENLOOP_ACCEL_DUTY_PARAMS: u32 = 0x121;
+
+    // === PWM Configuration (0x130) ===
+    /// PWM config (frequency: u32, dead_time: u16, 6 bytes)
+    pub const PWM_CONFIG: u32 = 0x130;
+
+    // === CAN Configuration (0x140) ===
+    /// CAN config (bitrate: u32, 4 bytes)
+    pub const CAN_CONFIG: u32 = 0x140;
+
+    // === Control Timing (0x150) ===
+    /// Control timing (control_period_us: u64, 8 bytes)
+    pub const CONTROL_TIMING: u32 = 0x150;
+
     /// Motor status feedback (speed: f32, angle: f32, 8 bytes)
     pub const STATUS: u32 = 0x200;
 
@@ -307,6 +339,89 @@ pub fn decode_config_status(data: &[u8]) -> Option<(u16, bool)> {
     let crc_valid = data[2] != 0;
 
     Some((version, crc_valid))
+}
+
+// ============================================================================
+// Motor Control Parameter Commands (Encode functions)
+// ============================================================================
+
+/// Encode motor voltage parameters into CAN data
+pub fn encode_motor_voltage_params(max_voltage: f32, v_dc_bus: f32) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8);
+    data.extend_from_slice(&max_voltage.to_le_bytes());
+    data.extend_from_slice(&v_dc_bus.to_le_bytes());
+    data
+}
+
+/// Encode motor basic parameters into CAN data
+pub fn encode_motor_basic_params(pole_pairs: u8, max_duty: u16) -> Vec<u8> {
+    let mut data = Vec::with_capacity(3);
+    data.push(pole_pairs);
+    data.extend_from_slice(&max_duty.to_le_bytes());
+    data
+}
+
+/// Encode hall sensor parameters into CAN data
+pub fn encode_hall_sensor_params(speed_filter_alpha: f32, hall_angle_offset: f32) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8);
+    data.extend_from_slice(&speed_filter_alpha.to_le_bytes());
+    data.extend_from_slice(&hall_angle_offset.to_le_bytes());
+    data
+}
+
+/// Encode angle interpolation setting into CAN data
+pub fn encode_angle_interpolation(enable: bool) -> Vec<u8> {
+    vec![if enable { 1 } else { 0 }]
+}
+
+// ============================================================================
+// OpenLoop Parameter Commands (Encode functions)
+// ============================================================================
+
+/// Encode openloop RPM parameters into CAN data
+pub fn encode_openloop_rpm_params(initial_rpm: f32, target_rpm: f32) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8);
+    data.extend_from_slice(&initial_rpm.to_le_bytes());
+    data.extend_from_slice(&target_rpm.to_le_bytes());
+    data
+}
+
+/// Encode openloop acceleration/duty parameters into CAN data
+pub fn encode_openloop_accel_duty_params(acceleration: f32, duty_ratio: u16) -> Vec<u8> {
+    let mut data = Vec::with_capacity(6);
+    data.extend_from_slice(&acceleration.to_le_bytes());
+    data.extend_from_slice(&duty_ratio.to_le_bytes());
+    data
+}
+
+// ============================================================================
+// PWM Configuration Commands (Encode functions)
+// ============================================================================
+
+/// Encode PWM configuration into CAN data
+pub fn encode_pwm_config(frequency: u32, dead_time: u16) -> Vec<u8> {
+    let mut data = Vec::with_capacity(6);
+    data.extend_from_slice(&frequency.to_le_bytes());
+    data.extend_from_slice(&dead_time.to_le_bytes());
+    data
+}
+
+// ============================================================================
+// CAN Configuration Commands (Encode functions)
+// ============================================================================
+
+/// Encode CAN configuration into CAN data
+pub fn encode_can_config(bitrate: u32) -> Vec<u8> {
+    bitrate.to_le_bytes().to_vec()
+}
+
+// ============================================================================
+// Control Timing Commands (Encode functions)
+// ============================================================================
+
+/// Encode control timing into CAN data
+pub fn encode_control_timing(control_period_us: u64) -> Vec<u8> {
+    control_period_us.to_le_bytes().to_vec()
 }
 
 #[cfg(test)]

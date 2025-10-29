@@ -18,7 +18,7 @@ impl Default for ConnectionState {
     }
 }
 
-/// User settings
+/// User settings (matches firmware StoredConfig)
 #[derive(Debug, Clone)]
 pub struct UserSettings {
     /// Target speed in RPM
@@ -29,15 +29,80 @@ pub struct UserSettings {
     pub ki: f32,
     /// Motor enable flag
     pub motor_enabled: bool,
+
+    // === Motor Control Parameters ===
+    /// Maximum voltage [V]
+    pub max_voltage: f32,
+    /// DC bus voltage [V]
+    pub v_dc_bus: f32,
+    /// Motor pole pairs
+    pub pole_pairs: u8,
+    /// Maximum duty cycle
+    pub max_duty: u16,
+    /// Hall sensor speed filter alpha
+    pub speed_filter_alpha: f32,
+    /// Hall sensor angle offset [rad]
+    pub hall_angle_offset: f32,
+    /// Enable angle interpolation
+    pub enable_angle_interpolation: bool,
+
+    // === OpenLoop Parameters ===
+    /// OpenLoop initial RPM
+    pub openloop_initial_rpm: f32,
+    /// OpenLoop target RPM
+    pub openloop_target_rpm: f32,
+    /// OpenLoop acceleration [RPM/s]
+    pub openloop_acceleration: f32,
+    /// OpenLoop duty ratio (0-100)
+    pub openloop_duty_ratio: u16,
+
+    // === PWM Configuration ===
+    /// PWM frequency [Hz]
+    pub pwm_frequency: u32,
+    /// PWM dead time
+    pub pwm_dead_time: u16,
+
+    // === CAN Configuration ===
+    /// CAN bitrate [bps]
+    pub can_bitrate: u32,
+
+    // === Control Timing ===
+    /// Control period [μs]
+    pub control_period_us: u64,
 }
 
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
             target_speed: 0.0,
-            kp: 0.5,      // Default from firmware config
-            ki: 0.05,     // Default from firmware config
+            kp: 0.5,
+            ki: 0.05,
             motor_enabled: false,
+
+            // Motor Control defaults (from firmware config.rs)
+            max_voltage: 24.0,
+            v_dc_bus: 24.0,
+            pole_pairs: 6,
+            max_duty: 100,
+            speed_filter_alpha: 0.1,
+            hall_angle_offset: 0.0,
+            enable_angle_interpolation: true,
+
+            // OpenLoop defaults
+            openloop_initial_rpm: 100.0,
+            openloop_target_rpm: 500.0,
+            openloop_acceleration: 100.0,
+            openloop_duty_ratio: 50,
+
+            // PWM defaults
+            pwm_frequency: 50000,
+            pwm_dead_time: 100,
+
+            // CAN defaults
+            can_bitrate: 250000,
+
+            // Control timing defaults
+            control_period_us: 400,
         }
     }
 }

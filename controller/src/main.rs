@@ -2,8 +2,8 @@ mod can;
 mod state;
 mod ui;
 
-use dioxus::prelude::*;
 use dioxus::desktop::{Config, WindowBuilder};
+use dioxus::prelude::*;
 use state::AppState;
 use tracing_subscriber;
 
@@ -15,10 +15,7 @@ fn main() {
 
     // Launch the Dioxus app with custom window title
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(Config::new().with_window(
-            WindowBuilder::new()
-                .with_title("G4 Driver")
-        ))
+        .with_cfg(Config::new().with_window(WindowBuilder::new().with_title("G4 Driver")))
         .launch(App);
 }
 
