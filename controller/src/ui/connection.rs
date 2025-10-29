@@ -3,6 +3,7 @@ use tracing::{error, info};
 
 use crate::can::{self, CanManager};
 use crate::state::{AppState, ConnectionState};
+use super::components::{Button, ButtonVariant, ErrorBanner, StatusColor, StatusIndicator};
 
 #[component]
 pub fn ConnectionBar() -> Element {
@@ -114,10 +115,10 @@ pub fn ConnectionBar() -> Element {
 
     // Determine connection status display
     let (status_color, status_text) = match &state.connection_state {
-        ConnectionState::Disconnected => ("#999", "Disconnected"),
-        ConnectionState::Connecting => ("#ff9800", "Connecting..."),
-        ConnectionState::Connected => ("#4caf50", "Connected"),
-        ConnectionState::Error(_) => ("#f44336", "Error"),
+        ConnectionState::Disconnected => (StatusColor::Gray, "Disconnected"),
+        ConnectionState::Connecting => (StatusColor::Orange, "Connecting..."),
+        ConnectionState::Connected => (StatusColor::Green, "Connected"),
+        ConnectionState::Error(_) => (StatusColor::Red, "Error"),
     };
 
     let button_text = if matches!(state.connection_state, ConnectionState::Connected) {
@@ -199,43 +200,37 @@ pub fn ConnectionBar() -> Element {
                 }
 
                 // Refresh button
-                button {
-                    style: "padding: 6px 12px; border: 1px solid #007bff; background: white; color: #007bff; cursor: pointer; border-radius: 4px; font-size: 13px;",
-                    onclick: on_refresh_interfaces,
+                Button {
+                    variant: ButtonVariant::Outline,
                     disabled: matches!(state.connection_state, ConnectionState::Connecting),
+                    custom_style: "padding: 6px 12px; font-size: 13px;".to_string(),
+                    onclick: on_refresh_interfaces,
                     "🔄 Refresh"
                 }
 
                 // Connect/Disconnect button
-                button {
-                    style: if button_enabled {
-                        "padding: 8px 20px; border: none; background: #007bff; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                    } else {
-                        "padding: 8px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                    },
-                    onclick: on_connect,
+                Button {
+                    variant: ButtonVariant::Primary,
                     disabled: !button_enabled,
+                    custom_style: "padding: 8px 20px;".to_string(),
+                    onclick: on_connect,
                     "{button_text}"
                 }
 
                 // Status indicator
-                div {
-                    style: "display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: white; border-radius: 4px; border: 1px solid #ddd;",
-                    div {
-                        style: "width: 12px; height: 12px; border-radius: 50%; background: {status_color};",
-                    }
-                    span {
-                        style: "font-size: 14px; color: #333;",
-                        "{status_text}"
-                    }
+                StatusIndicator {
+                    text: status_text.to_string(),
+                    color: status_color
                 }
             }
 
             // Error message
             if let ConnectionState::Error(msg) = &state.connection_state {
                 div {
-                    style: "padding: 8px 20px; background: #ffebee; border-top: 1px solid #ef5350; color: #c62828; font-size: 13px;",
-                    "❌ Error: {msg}"
+                    style: "padding: 8px 20px; border-top: 1px solid #ef5350;",
+                    ErrorBanner {
+                        message: format!("Error: {}", msg)
+                    }
                 }
             }
         }

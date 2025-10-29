@@ -1,3 +1,4 @@
+mod components;
 mod connection;
 mod control;
 mod settings;

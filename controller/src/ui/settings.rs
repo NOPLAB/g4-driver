@@ -2,6 +2,11 @@ use dioxus::prelude::*;
 use tracing::{error, info};
 
 use crate::state::{AppState, ConnectionState};
+use super::components::{
+    Banner, BannerType, Button, ButtonVariant, Card, ErrorBanner, F32Input, HeaderColor,
+    SectionHeader, StatusCard, StatusCardColor, U16Input, U32Input, U64Input, U8Input,
+    WarningBanner,
+};
 
 // Default values (from firmware config)
 const DEFAULT_KP: f32 = 0.5;
@@ -38,9 +43,8 @@ pub fn SettingsPanel() -> Element {
 
             // Connection warning
             if !is_connected {
-                div {
-                    style: "padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;",
-                    "⚠ Not connected to CAN. Please connect first."
+                WarningBanner {
+                    message: "Not connected to CAN. Please connect first.".to_string()
                 }
             }
 
@@ -119,16 +123,12 @@ pub fn SettingsPanel() -> Element {
 fn PIControlTab(is_connected: bool) -> Element {
     let mut app_state = use_context::<Signal<AppState>>();
 
-    let on_kp_change = move |evt: Event<FormData>| {
-        if let Some(value) = evt.value().parse::<f32>().ok() {
-            app_state.write().settings.kp = value;
-        }
+    let on_kp_change = move |value: f32| {
+        app_state.write().settings.kp = value;
     };
 
-    let on_ki_change = move |evt: Event<FormData>| {
-        if let Some(value) = evt.value().parse::<f32>().ok() {
-            app_state.write().settings.ki = value;
-        }
+    let on_ki_change = move |value: f32| {
+        app_state.write().settings.ki = value;
     };
 
     let on_apply = move |_| {
@@ -153,69 +153,47 @@ fn PIControlTab(is_connected: bool) -> Element {
     let state = app_state.read();
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
+        Card {
+            SectionHeader { title: "PI Controller Settings".to_string() }
 
-            h2 { style: "margin: 0 0 15px 0; font-size: 20px; color: #333;", "PI Controller Settings" }
-
-            div {
-                style: "padding: 12px; background: #e7f3ff; border-left: 4px solid #007bff; border-radius: 4px; margin-bottom: 20px;",
-                p { style: "margin: 0; font-size: 14px; color: #555;",
-                    "Configure the PI controller gains for speed control. These values affect the motor's response to speed commands."
-                }
+            Banner {
+                banner_type: BannerType::Info,
+                message: "Configure the PI controller gains for speed control. These values affect the motor's response to speed commands.".to_string()
             }
 
             div { style: "display: grid; gap: 20px;",
                 // Kp input
-                div {
-                    label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;",
-                        "Proportional Gain (Kp)"
-                    }
-                    input {
-                        r#type: "number",
-                        step: "0.01",
-                        value: "{state.settings.kp}",
-                        oninput: on_kp_change,
-                        disabled: !is_connected,
-                        style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                    }
-                    p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;",
-                        "Higher values provide faster response but may cause oscillations. Default: {DEFAULT_KP}"
-                    }
+                F32Input {
+                    label: "Proportional Gain (Kp)".to_string(),
+                    value: state.settings.kp,
+                    step: "0.01".to_string(),
+                    on_change: on_kp_change,
+                    is_connected,
+                    description: format!("Higher values provide faster response but may cause oscillations. Default: {}", DEFAULT_KP)
                 }
 
                 // Ki input
-                div {
-                    label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;",
-                        "Integral Gain (Ki)"
-                    }
-                    input {
-                        r#type: "number",
-                        step: "0.001",
-                        value: "{state.settings.ki}",
-                        oninput: on_ki_change,
-                        disabled: !is_connected,
-                        style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                    }
-                    p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;",
-                        "Helps eliminate steady-state error. Too high may cause instability. Default: {DEFAULT_KI}"
-                    }
+                F32Input {
+                    label: "Integral Gain (Ki)".to_string(),
+                    value: state.settings.ki,
+                    step: "0.001".to_string(),
+                    on_change: on_ki_change,
+                    is_connected,
+                    description: format!("Helps eliminate steady-state error. Too high may cause instability. Default: {}", DEFAULT_KI)
                 }
 
                 // Action buttons
                 div { style: "display: flex; gap: 10px; margin-top: 10px;",
-                    button {
-                        style: if is_connected {
-                            "flex: 1; padding: 10px 20px; border: none; background: #28a745; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        } else {
-                            "flex: 1; padding: 10px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        },
-                        onclick: on_apply,
+                    Button {
+                        variant: ButtonVariant::Success,
                         disabled: !is_connected,
+                        custom_style: "flex: 1;".to_string(),
+                        onclick: on_apply,
                         "Apply Settings"
                     }
-                    button {
-                        style: "flex: 1; padding: 10px 20px; border: 1px solid #6c757d; background: white; color: #6c757d; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        custom_style: "flex: 1;".to_string(),
                         onclick: on_reset,
                         "Reset to Defaults"
                     }
@@ -230,17 +208,16 @@ fn MotorControlTab(is_connected: bool) -> Element {
     let mut app_state = use_context::<Signal<AppState>>();
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px;",
-            h2 { "Motor Control Parameters" }
-            p { style: "color: #666;", "Configure motor voltage, pole pairs, and duty cycle parameters." }
+        Card {
+            SectionHeader { title: "Motor Control Parameters".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure motor voltage, pole pairs, and duty cycle parameters." }
 
             div { style: "display: grid; gap: 15px; margin-top: 20px;",
                 // Max Voltage
-                SettingInput {
-                    label: "Max Voltage (V)",
+                F32Input {
+                    label: "Max Voltage (V)".to_string(),
                     value: app_state.read().settings.max_voltage,
-                    step: "0.1",
+                    step: "0.1".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.max_voltage = v;
                         let val = v;
@@ -251,15 +228,14 @@ fn MotorControlTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_MAX_VOLTAGE,
-                    description: "Maximum voltage limit for motor control"
+                    description: format!("Maximum voltage limit for motor control. Default: {}", DEFAULT_MAX_VOLTAGE)
                 }
 
                 // DC Bus Voltage
-                SettingInput {
-                    label: "DC Bus Voltage (V)",
+                F32Input {
+                    label: "DC Bus Voltage (V)".to_string(),
                     value: app_state.read().settings.v_dc_bus,
-                    step: "0.1",
+                    step: "0.1".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.v_dc_bus = v;
                         let val = v;
@@ -270,13 +246,12 @@ fn MotorControlTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_V_DC_BUS,
-                    description: "DC bus voltage for calculations"
+                    description: format!("DC bus voltage for calculations. Default: {}", DEFAULT_V_DC_BUS)
                 }
 
                 // Pole Pairs
-                SettingInputU8 {
-                    label: "Pole Pairs",
+                U8Input {
+                    label: "Pole Pairs".to_string(),
                     value: app_state.read().settings.pole_pairs,
                     on_change: move |v| {
                         app_state.write().settings.pole_pairs = v;
@@ -288,13 +263,12 @@ fn MotorControlTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_POLE_PAIRS,
-                    description: "Number of motor pole pairs (poles/2)"
+                    description: format!("Number of motor pole pairs (poles/2). Default: {}", DEFAULT_POLE_PAIRS)
                 }
 
                 // Max Duty
-                SettingInputU16 {
-                    label: "Max Duty Cycle",
+                U16Input {
+                    label: "Max Duty Cycle".to_string(),
                     value: app_state.read().settings.max_duty,
                     on_change: move |v| {
                         app_state.write().settings.max_duty = v;
@@ -306,8 +280,7 @@ fn MotorControlTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_MAX_DUTY,
-                    description: "Maximum PWM duty cycle (0-100)"
+                    description: format!("Maximum PWM duty cycle (0-100). Default: {}", DEFAULT_MAX_DUTY)
                 }
             }
         }
@@ -319,17 +292,16 @@ fn HallSensorTab(is_connected: bool) -> Element {
     let mut app_state = use_context::<Signal<AppState>>();
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px;",
-            h2 { "Hall Sensor Parameters" }
-            p { style: "color: #666;", "Configure Hall sensor filter and angle offset." }
+        Card {
+            SectionHeader { title: "Hall Sensor Parameters".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure Hall sensor filter and angle offset." }
 
             div { style: "display: grid; gap: 15px; margin-top: 20px;",
                 // Speed Filter Alpha
-                SettingInput {
-                    label: "Speed Filter Alpha",
+                F32Input {
+                    label: "Speed Filter Alpha".to_string(),
                     value: app_state.read().settings.speed_filter_alpha,
-                    step: "0.01",
+                    step: "0.01".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.speed_filter_alpha = v;
                         let val = v;
@@ -340,15 +312,14 @@ fn HallSensorTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_SPEED_FILTER_ALPHA,
-                    description: "Low-pass filter coefficient for speed (0-1)"
+                    description: format!("Low-pass filter coefficient for speed (0-1). Default: {}", DEFAULT_SPEED_FILTER_ALPHA)
                 }
 
                 // Hall Angle Offset
-                SettingInput {
-                    label: "Hall Angle Offset (rad)",
+                F32Input {
+                    label: "Hall Angle Offset (rad)".to_string(),
                     value: app_state.read().settings.hall_angle_offset,
-                    step: "0.01",
+                    step: "0.01".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.hall_angle_offset = v;
                         let val = v;
@@ -359,8 +330,7 @@ fn HallSensorTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_HALL_ANGLE_OFFSET,
-                    description: "Angle offset for Hall sensor alignment"
+                    description: format!("Angle offset for Hall sensor alignment. Default: {}", DEFAULT_HALL_ANGLE_OFFSET)
                 }
 
                 // Angle Interpolation
@@ -395,17 +365,16 @@ fn OpenLoopTab(is_connected: bool) -> Element {
     let mut app_state = use_context::<Signal<AppState>>();
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px;",
-            h2 { "OpenLoop Startup Parameters" }
-            p { style: "color: #666;", "Configure openloop ramp-up for motor startup." }
+        Card {
+            SectionHeader { title: "OpenLoop Startup Parameters".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure openloop ramp-up for motor startup." }
 
             div { style: "display: grid; gap: 15px; margin-top: 20px;",
                 // Initial RPM
-                SettingInput {
-                    label: "Initial RPM",
+                F32Input {
+                    label: "Initial RPM".to_string(),
                     value: app_state.read().settings.openloop_initial_rpm,
-                    step: "10.0",
+                    step: "10.0".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.openloop_initial_rpm = v;
                         let val = v;
@@ -416,15 +385,14 @@ fn OpenLoopTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_OPENLOOP_INITIAL_RPM,
-                    description: "Starting RPM for openloop ramp-up"
+                    description: format!("Starting RPM for openloop ramp-up. Default: {}", DEFAULT_OPENLOOP_INITIAL_RPM)
                 }
 
                 // Target RPM
-                SettingInput {
-                    label: "Target RPM",
+                F32Input {
+                    label: "Target RPM".to_string(),
                     value: app_state.read().settings.openloop_target_rpm,
-                    step: "10.0",
+                    step: "10.0".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.openloop_target_rpm = v;
                         let val = v;
@@ -435,15 +403,14 @@ fn OpenLoopTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_OPENLOOP_TARGET_RPM,
-                    description: "Target RPM to switch to FOC control"
+                    description: format!("Target RPM to switch to FOC control. Default: {}", DEFAULT_OPENLOOP_TARGET_RPM)
                 }
 
                 // Acceleration
-                SettingInput {
-                    label: "Acceleration (RPM/s)",
+                F32Input {
+                    label: "Acceleration (RPM/s)".to_string(),
                     value: app_state.read().settings.openloop_acceleration,
-                    step: "10.0",
+                    step: "10.0".to_string(),
                     on_change: move |v| {
                         app_state.write().settings.openloop_acceleration = v;
                         let val = v;
@@ -454,13 +421,12 @@ fn OpenLoopTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_OPENLOOP_ACCELERATION,
-                    description: "Ramp-up acceleration rate"
+                    description: format!("Ramp-up acceleration rate. Default: {}", DEFAULT_OPENLOOP_ACCELERATION)
                 }
 
                 // Duty Ratio
-                SettingInputU16 {
-                    label: "Duty Ratio (0-100)",
+                U16Input {
+                    label: "Duty Ratio (0-100)".to_string(),
                     value: app_state.read().settings.openloop_duty_ratio,
                     on_change: move |v| {
                         app_state.write().settings.openloop_duty_ratio = v;
@@ -472,8 +438,7 @@ fn OpenLoopTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_OPENLOOP_DUTY_RATIO,
-                    description: "PWM duty ratio during openloop"
+                    description: format!("PWM duty ratio during openloop. Default: {}", DEFAULT_OPENLOOP_DUTY_RATIO)
                 }
             }
         }
@@ -485,22 +450,18 @@ fn AdvancedTab(is_connected: bool) -> Element {
     let mut app_state = use_context::<Signal<AppState>>();
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px;",
-
-            // Warning banner
-            div {
-                style: "padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24; margin-bottom: 20px;",
-                "⚠ Warning: These settings require device reboot to take effect. Incorrect values may prevent the device from operating."
+        Card {
+            ErrorBanner {
+                message: "Warning: These settings require device reboot to take effect. Incorrect values may prevent the device from operating.".to_string()
             }
 
-            h2 { "Advanced Configuration" }
-            p { style: "color: #666;", "Low-level hardware configuration. Change with caution." }
+            SectionHeader { title: "Advanced Configuration".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Low-level hardware configuration. Change with caution." }
 
             div { style: "display: grid; gap: 15px; margin-top: 20px;",
                 // PWM Frequency
-                SettingInputU32 {
-                    label: "PWM Frequency (Hz)",
+                U32Input {
+                    label: "PWM Frequency (Hz)".to_string(),
                     value: app_state.read().settings.pwm_frequency,
                     on_change: move |v| {
                         app_state.write().settings.pwm_frequency = v;
@@ -512,13 +473,12 @@ fn AdvancedTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_PWM_FREQUENCY,
-                    description: "PWM switching frequency. Default: {DEFAULT_PWM_FREQUENCY} Hz. ⚠ Requires reboot"
+                    description: format!("PWM switching frequency. Default: {} Hz. ⚠ Requires reboot", DEFAULT_PWM_FREQUENCY)
                 }
 
                 // PWM Dead Time
-                SettingInputU16 {
-                    label: "PWM Dead Time",
+                U16Input {
+                    label: "PWM Dead Time".to_string(),
                     value: app_state.read().settings.pwm_dead_time,
                     on_change: move |v| {
                         app_state.write().settings.pwm_dead_time = v;
@@ -530,13 +490,12 @@ fn AdvancedTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_PWM_DEAD_TIME,
-                    description: "Dead time for complementary PWM. ⚠ Requires reboot"
+                    description: format!("Dead time for complementary PWM. Default: {}. ⚠ Requires reboot", DEFAULT_PWM_DEAD_TIME)
                 }
 
                 // CAN Bitrate
-                SettingInputU32 {
-                    label: "CAN Bitrate (bps)",
+                U32Input {
+                    label: "CAN Bitrate (bps)".to_string(),
                     value: app_state.read().settings.can_bitrate,
                     on_change: move |v| {
                         app_state.write().settings.can_bitrate = v;
@@ -547,13 +506,12 @@ fn AdvancedTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_CAN_BITRATE,
-                    description: "CAN bus bitrate. Default: {DEFAULT_CAN_BITRATE} bps. ⚠ Requires reboot"
+                    description: format!("CAN bus bitrate. Default: {} bps. ⚠ Requires reboot", DEFAULT_CAN_BITRATE)
                 }
 
                 // Control Period
-                SettingInputU64 {
-                    label: "Control Period (μs)",
+                U64Input {
+                    label: "Control Period (μs)".to_string(),
                     value: app_state.read().settings.control_period_us,
                     on_change: move |v| {
                         app_state.write().settings.control_period_us = v;
@@ -564,8 +522,7 @@ fn AdvancedTab(is_connected: bool) -> Element {
                         });
                     },
                     is_connected,
-                    default_value: DEFAULT_CONTROL_PERIOD_US,
-                    description: "FOC control loop period. Default: {DEFAULT_CONTROL_PERIOD_US} μs. ⚠ Requires reboot"
+                    description: format!("FOC control loop period. Default: {} μs. ⚠ Requires reboot", DEFAULT_CONTROL_PERIOD_US)
                 }
             }
         }
@@ -611,79 +568,55 @@ fn ConfigManagementSection(is_connected: bool) -> Element {
     };
 
     rsx! {
-        div {
-            style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-
-            h2 {
-                style: "margin: 0 0 15px 0; font-size: 20px; color: #333; border-bottom: 2px solid #28a745; padding-bottom: 10px;",
-                "Configuration Management"
+        Card {
+            SectionHeader {
+                title: "Configuration Management".to_string(),
+                color: HeaderColor::Green
             }
 
             div { style: "display: flex; flex-direction: column; gap: 15px;",
                 // Description
-                div {
-                    style: "padding: 12px; background: #e7f9ed; border-left: 4px solid #28a745; border-radius: 4px;",
-                    p { style: "margin: 0; font-size: 14px; color: #555;",
-                        "Save current settings to flash memory for persistence across power cycles."
-                    }
+                Banner {
+                    banner_type: BannerType::Success,
+                    message: "Save current settings to flash memory for persistence across power cycles.".to_string()
                 }
 
                 // Config status display
                 div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;",
-                    // Version
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #28a745;",
-                        div { style: "font-size: 12px; color: #666; margin-bottom: 5px;", "Config Version" }
-                        div { style: "font-size: 24px; font-weight: bold; color: #333;", "{state.config_version}" }
+                    StatusCard {
+                        label: "Config Version".to_string(),
+                        value: format!("{}", state.config_version),
+                        color: StatusCardColor::Green
                     }
 
-                    // CRC status
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #28a745;",
-                        div { style: "font-size: 12px; color: #666; margin-bottom: 5px;", "CRC Status" }
-                        div {
-                            style: if state.config_crc_valid {
-                                "font-size: 18px; font-weight: bold; color: #28a745;"
-                            } else {
-                                "font-size: 18px; font-weight: bold; color: #dc3545;"
-                            },
-                            if state.config_crc_valid { "✓ Valid" } else { "✗ Invalid" }
-                        }
+                    StatusCard {
+                        label: "CRC Status".to_string(),
+                        value: if state.config_crc_valid { "✓ Valid".to_string() } else { "✗ Invalid".to_string() },
+                        color: if state.config_crc_valid { StatusCardColor::Green } else { StatusCardColor::Red }
                     }
                 }
 
                 // Action buttons
                 div { style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;",
-                    button {
-                        style: if is_connected {
-                            "padding: 10px 20px; border: none; background: #28a745; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        } else {
-                            "padding: 10px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        },
-                        onclick: on_save_config,
+                    Button {
+                        variant: ButtonVariant::Success,
                         disabled: !is_connected,
+                        onclick: on_save_config,
                         "💾 Save to Flash"
                     }
 
-                    button {
-                        style: if is_connected {
-                            "padding: 10px 20px; border: 1px solid #007bff; background: white; color: #007bff; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        } else {
-                            "padding: 10px 20px; border: 1px solid #ccc; background: white; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        },
-                        onclick: on_reload_config,
+                    Button {
+                        variant: ButtonVariant::Outline,
                         disabled: !is_connected,
+                        onclick: on_reload_config,
                         "🔄 Reload from Flash"
                     }
 
-                    button {
-                        style: if is_connected {
-                            "padding: 10px 20px; border: 1px solid #dc3545; background: white; color: #dc3545; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        } else {
-                            "padding: 10px 20px; border: 1px solid #ccc; background: white; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                        },
-                        onclick: on_reset_config,
+                    Button {
+                        variant: ButtonVariant::Danger,
                         disabled: !is_connected,
+                        custom_style: "border: 1px solid #dc3545; background: white; color: #dc3545;".to_string(),
+                        onclick: on_reset_config,
                         "⚠ Reset to Defaults"
                     }
                 }
@@ -692,145 +625,3 @@ fn ConfigManagementSection(is_connected: bool) -> Element {
     }
 }
 
-// Helper components for consistent input styling
-#[component]
-fn SettingInput(
-    label: String,
-    value: f32,
-    step: String,
-    on_change: EventHandler<f32>,
-    is_connected: bool,
-    default_value: f32,
-    description: String,
-) -> Element {
-    rsx! {
-        div {
-            label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;", "{label}" }
-            input {
-                r#type: "number",
-                step: "{step}",
-                value: "{value}",
-                disabled: !is_connected,
-                style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                oninput: move |evt| {
-                    if let Some(v) = evt.value().parse::<f32>().ok() {
-                        on_change.call(v);
-                    }
-                },
-            }
-            p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;", "{description}" }
-        }
-    }
-}
-
-#[component]
-fn SettingInputU8(
-    label: String,
-    value: u8,
-    on_change: EventHandler<u8>,
-    is_connected: bool,
-    default_value: u8,
-    description: String,
-) -> Element {
-    rsx! {
-        div {
-            label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;", "{label}" }
-            input {
-                r#type: "number",
-                value: "{value}",
-                disabled: !is_connected,
-                style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                oninput: move |evt| {
-                    if let Some(v) = evt.value().parse::<u8>().ok() {
-                        on_change.call(v);
-                    }
-                },
-            }
-            p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;", "{description}" }
-        }
-    }
-}
-
-#[component]
-fn SettingInputU16(
-    label: String,
-    value: u16,
-    on_change: EventHandler<u16>,
-    is_connected: bool,
-    default_value: u16,
-    description: String,
-) -> Element {
-    rsx! {
-        div {
-            label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;", "{label}" }
-            input {
-                r#type: "number",
-                value: "{value}",
-                disabled: !is_connected,
-                style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                oninput: move |evt| {
-                    if let Some(v) = evt.value().parse::<u16>().ok() {
-                        on_change.call(v);
-                    }
-                },
-            }
-            p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;", "{description}" }
-        }
-    }
-}
-
-#[component]
-fn SettingInputU32(
-    label: String,
-    value: u32,
-    on_change: EventHandler<u32>,
-    is_connected: bool,
-    default_value: u32,
-    description: String,
-) -> Element {
-    rsx! {
-        div {
-            label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;", "{label}" }
-            input {
-                r#type: "number",
-                value: "{value}",
-                disabled: !is_connected,
-                style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                oninput: move |evt| {
-                    if let Some(v) = evt.value().parse::<u32>().ok() {
-                        on_change.call(v);
-                    }
-                },
-            }
-            p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;", "{description}" }
-        }
-    }
-}
-
-#[component]
-fn SettingInputU64(
-    label: String,
-    value: u64,
-    on_change: EventHandler<u64>,
-    is_connected: bool,
-    default_value: u64,
-    description: String,
-) -> Element {
-    rsx! {
-        div {
-            label { style: "font-size: 14px; font-weight: 500; color: #555; display: block; margin-bottom: 8px;", "{label}" }
-            input {
-                r#type: "number",
-                value: "{value}",
-                disabled: !is_connected,
-                style: "width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
-                oninput: move |evt| {
-                    if let Some(v) = evt.value().parse::<u64>().ok() {
-                        on_change.call(v);
-                    }
-                },
-            }
-            p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;", "{description}" }
-        }
-    }
-}

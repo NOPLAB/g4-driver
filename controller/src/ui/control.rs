@@ -2,6 +2,10 @@ use dioxus::prelude::*;
 use tracing::{error, info};
 
 use crate::state::{AppState, ConnectionState};
+use super::components::{
+    Button, ButtonVariant, Card, EmergencyStopButton, F32InputInline, SectionHeader,
+    StatusCard, StatusCardColor, ToggleSwitch, WarningBanner,
+};
 
 #[component]
 pub fn ControlPanel() -> Element {
@@ -18,10 +22,8 @@ pub fn ControlPanel() -> Element {
     };
 
     // Speed input change handler
-    let on_speed_input_change = move |evt: Event<FormData>| {
-        if let Some(value) = evt.value().parse::<f32>().ok() {
-            app_state.write().settings.target_speed = value.clamp(0.0, 3000.0);
-        }
+    let on_speed_input_change = move |value: f32| {
+        app_state.write().settings.target_speed = value.clamp(0.0, 3000.0);
     };
 
     // Speed apply button handler
@@ -76,19 +78,15 @@ pub fn ControlPanel() -> Element {
 
             // Connection warning
             if !is_connected {
-                div {
-                    style: "padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;",
-                    "⚠ Not connected to CAN. Please connect first."
+                WarningBanner {
+                    message: "Not connected to CAN. Please connect first.".to_string()
                 }
             }
 
             // Speed Control Section
-            div {
-                style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-
-                h2 {
-                    style: "margin: 0 0 15px 0; font-size: 20px; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px;",
-                    "Speed Control"
+            Card {
+                SectionHeader {
+                    title: "Speed Control".to_string()
                 }
 
                 div {
@@ -116,28 +114,21 @@ pub fn ControlPanel() -> Element {
                     // Speed input and apply button
                     div {
                         style: "display: flex; gap: 10px; align-items: center;",
-                        input {
-                            r#type: "number",
-                            min: 0,
-                            max: 3000,
-                            step: 10,
-                            value: "{state.settings.target_speed}",
-                            oninput: on_speed_input_change,
+                        F32InputInline {
+                            value: state.settings.target_speed,
+                            on_change: on_speed_input_change,
                             disabled: !is_connected,
-                            style: "flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;",
+                            style: "flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;".to_string(),
+                            placeholder: Some("Enter speed...".to_string()),
                         }
                         span {
                             style: "color: #666; font-size: 14px;",
                             "RPM"
                         }
-                        button {
-                            style: if is_connected {
-                                "padding: 8px 20px; border: none; background: #28a745; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                            } else {
-                                "padding: 8px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                            },
-                            onclick: on_speed_apply,
+                        Button {
+                            variant: ButtonVariant::Success,
                             disabled: !is_connected,
+                            onclick: on_speed_apply,
                             "Apply"
                         }
                     }
@@ -145,125 +136,74 @@ pub fn ControlPanel() -> Element {
             }
 
             // Motor Control Section
-            div {
-                style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-
-                h2 {
-                    style: "margin: 0 0 15px 0; font-size: 20px; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px;",
-                    "Motor Control"
+            Card {
+                SectionHeader {
+                    title: "Motor Control".to_string()
                 }
 
                 div {
                     style: "display: flex; gap: 20px; align-items: center;",
 
-                    // Motor enable toggle
-                    div {
-                        style: "display: flex; align-items: center; gap: 10px;",
-                        label {
-                            style: "font-size: 14px; font-weight: 500; color: #555;",
-                            "Motor Enable:"
-                        }
-                        button {
-                            style: if is_connected {
-                                if state.settings.motor_enabled {
-                                    "padding: 8px 20px; border: none; background: #28a745; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                                } else {
-                                    "padding: 8px 20px; border: none; background: #6c757d; color: white; cursor: pointer; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                                }
-                            } else {
-                                "padding: 8px 20px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 14px; font-weight: 500;"
-                            },
-                            onclick: on_motor_enable_toggle,
-                            disabled: !is_connected,
-                            if state.settings.motor_enabled { "Enabled" } else { "Disabled" }
-                        }
+                    // Motor enable toggle switch
+                    ToggleSwitch {
+                        label: "Motor Enable:".to_string(),
+                        checked: state.settings.motor_enabled,
+                        is_disabled: !is_connected,
+                        onchange: on_motor_enable_toggle
                     }
 
                     // Emergency stop button
                     div {
                         style: "margin-left: auto;",
-                        button {
-                            style: if is_connected {
-                                "padding: 12px 30px; border: none; background: #dc3545; color: white; cursor: pointer; border-radius: 4px; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(220,53,69,0.3);"
-                            } else {
-                                "padding: 12px 30px; border: none; background: #ccc; color: #666; cursor: not-allowed; border-radius: 4px; font-size: 16px; font-weight: bold;"
-                            },
-                            onclick: on_emergency_stop,
+                        EmergencyStopButton {
                             disabled: !is_connected,
-                            "🛑 EMERGENCY STOP"
+                            onclick: on_emergency_stop
                         }
                     }
                 }
             }
 
             // Status Display Section
-            div {
-                style: "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-
-                h2 {
-                    style: "margin: 0 0 15px 0; font-size: 20px; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px;",
-                    "Status"
+            Card {
+                SectionHeader {
+                    title: "Status".to_string()
                 }
 
                 div {
                     style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;",
 
                     // Current speed
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #007bff;",
-                        div {
-                            style: "font-size: 12px; color: #666; margin-bottom: 5px;",
-                            "Current Speed"
-                        }
-                        div {
-                            style: "font-size: 24px; font-weight: bold; color: #333;",
-                            "{state.motor_status.speed_rpm:.1} RPM"
-                        }
+                    StatusCard {
+                        label: "Current Speed".to_string(),
+                        value: format!("{:.1} RPM", state.motor_status.speed_rpm),
+                        color: StatusCardColor::Blue
                     }
 
                     // Electrical angle
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #007bff;",
-                        div {
-                            style: "font-size: 12px; color: #666; margin-bottom: 5px;",
-                            "Electrical Angle"
-                        }
-                        div {
-                            style: "font-size: 24px; font-weight: bold; color: #333;",
-                            "{state.motor_status.electrical_angle * 180.0 / std::f32::consts::PI:.1}°"
-                        }
+                    StatusCard {
+                        label: "Electrical Angle".to_string(),
+                        value: format!("{:.1}°", state.motor_status.electrical_angle * 180.0 / std::f32::consts::PI),
+                        color: StatusCardColor::Blue
                     }
 
                     // DC Bus voltage
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #28a745;",
-                        div {
-                            style: "font-size: 12px; color: #666; margin-bottom: 5px;",
-                            "DC Bus Voltage"
-                        }
-                        div {
-                            style: "font-size: 24px; font-weight: bold; color: #333;",
-                            "{state.voltage_status.voltage:.1} V"
-                        }
+                    StatusCard {
+                        label: "DC Bus Voltage".to_string(),
+                        value: format!("{:.1} V", state.voltage_status.voltage),
+                        color: StatusCardColor::Green
                     }
 
                     // Voltage warnings
-                    div {
-                        style: "padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #ffc107;",
-                        div {
-                            style: "font-size: 12px; color: #666; margin-bottom: 5px;",
-                            "Voltage Status"
-                        }
-                        div {
-                            style: "font-size: 14px; font-weight: 500; color: #333;",
-                            if state.voltage_status.overvoltage {
-                                "⚠ OVERVOLTAGE"
-                            } else if state.voltage_status.undervoltage {
-                                "⚠ UNDERVOLTAGE"
-                            } else {
-                                "✓ Normal"
-                            }
-                        }
+                    StatusCard {
+                        label: "Voltage Status".to_string(),
+                        value: if state.voltage_status.overvoltage {
+                            "⚠ OVERVOLTAGE".to_string()
+                        } else if state.voltage_status.undervoltage {
+                            "⚠ UNDERVOLTAGE".to_string()
+                        } else {
+                            "✓ Normal".to_string()
+                        },
+                        color: StatusCardColor::Yellow
                     }
                 }
             }
