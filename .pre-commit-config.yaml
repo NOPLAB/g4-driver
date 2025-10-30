@@ -1,0 +1,69 @@
+# Pre-commit hooks configuration for g4-driver project
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  # Rust formatting and linting for firmware
+  - repo: local
+    hooks:
+      - id: cargo-fmt-firmware
+        name: cargo fmt (firmware)
+        description: Format firmware Rust code with cargo fmt
+        entry: bash -c 'cd firmware && cargo fmt --all --check'
+        language: system
+        files: ^firmware/.*\.rs$
+        pass_filenames: false
+      - id: cargo-clippy-firmware
+        name: cargo clippy (firmware)
+        description: Lint firmware Rust code with cargo clippy
+        entry: bash -c 'cd firmware && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^firmware/.*\.rs$
+        pass_filenames: false
+      - id: cargo-build-firmware
+        name: cargo build (firmware)
+        description: Build firmware to catch compilation errors
+        entry: bash -c 'cd firmware && cargo build'
+        language: system
+        files: ^firmware/.*\.rs$
+        pass_filenames: false
+
+  # Rust formatting, linting and testing for controller
+  - repo: local
+    hooks:
+      - id: cargo-fmt-controller
+        name: cargo fmt (controller)
+        description: Format controller Rust code with cargo fmt
+        entry: bash -c 'cd controller && cargo fmt --all --check'
+        language: system
+        files: ^controller/.*\.rs$
+        pass_filenames: false
+      - id: cargo-clippy-controller
+        name: cargo clippy (controller)
+        description: Lint controller Rust code with cargo clippy
+        entry: bash -c 'cd controller && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^controller/.*\.rs$
+        pass_filenames: false
+      - id: cargo-test-controller
+        name: cargo test (controller)
+        description: Run controller Rust tests with cargo test
+        entry: bash -c 'cd controller && cargo test'
+        language: system
+        files: ^controller/.*\.rs$
+        pass_filenames: false
+
+  # General pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.patch$
+      - id: end-of-file-fixer
+        exclude: \.patch$
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
