@@ -1,14 +1,18 @@
 // FOC (Field Oriented Control) module
 // Hall sensor-based FOC implementation for BLDC motor control
 
+pub mod calibration;
 pub mod hall_sensor;
 pub mod pi_controller;
+pub mod shaft_position;
 pub mod svpwm;
 pub mod transforms;
 
 // Re-export main types for easier access
+pub use calibration::{CalibrationResult, CalibrationState, MotorCalibration};
 pub use hall_sensor::HallSensor;
 pub use pi_controller::PiController;
+pub use shaft_position::ShaftPosition;
 pub use svpwm::calculate_svpwm;
 pub use transforms::{inverse_park, limit_voltage};
 
@@ -23,6 +27,8 @@ pub enum ControlMode {
     OpenLoop,
     /// クローズドループFOC制御（通常運転）
     ClosedLoopFoc,
+    /// キャリブレーションモード（電気角オフセット・回転方向の自動検出）
+    Calibration,
 }
 
 /// 6ステップ駆動の各ステップ情報

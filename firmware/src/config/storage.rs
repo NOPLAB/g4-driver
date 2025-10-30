@@ -1,8 +1,8 @@
 //! 設定パラメータの永続化構造体
 //!
-//! config.rsのすべてのパラメータをフラッシュメモリに保存するための構造体
+//! params.rsのすべてのパラメータをフラッシュメモリに保存するための構造体
 
-use crate::config;
+use super::params;
 
 /// 設定データのマジックナンバー（"CFG1"のASCII）
 pub const CONFIG_MAGIC: u32 = 0x31474643;
@@ -57,6 +57,19 @@ pub struct StoredConfig {
     /// パディング
     _padding2: [u8; 2],
 
+    // === キャリブレーション結果 ===
+    /// キャリブレーション済み電気角オフセット [rad] (0～2π)
+    pub calibration_electrical_offset: f32,
+
+    /// キャリブレーション済み方向反転フラグ
+    pub calibration_direction_inversed: bool,
+
+    /// キャリブレーション成功フラグ
+    pub calibration_success: bool,
+
+    /// パディング
+    _padding_calib: [u8; 2],
+
     // === オープンループ始動パラメータ ===
     /// 初期回転数 [RPM]
     pub openloop_initial_rpm: f32,
@@ -96,32 +109,36 @@ pub struct StoredConfig {
 }
 
 impl StoredConfig {
-    /// デフォルト設定を生成（config.rsの値を使用）
+    /// デフォルト設定を生成（params.rsの値を使用）
     pub const fn default() -> Self {
         Self {
             magic: CONFIG_MAGIC,
             version: CONFIG_VERSION,
             _padding: 0,
-            speed_kp: config::DEFAULT_SPEED_KP,
-            speed_ki: config::DEFAULT_SPEED_KI,
-            max_voltage: config::MAX_VOLTAGE,
-            v_dc_bus: config::V_DC_BUS,
-            pole_pairs: config::POLE_PAIRS,
-            max_duty: config::MAX_DUTY,
-            speed_filter_alpha: config::SPEED_FILTER_ALPHA,
-            hall_angle_offset: 0.0, // デフォルトはオフセットなし
-            enable_angle_interpolation: true, // デフォルトで有効
+            speed_kp: params::DEFAULT_SPEED_KP,
+            speed_ki: params::DEFAULT_SPEED_KI,
+            max_voltage: params::DEFAULT_MAX_VOLTAGE,
+            v_dc_bus: params::DEFAULT_V_DC_BUS,
+            pole_pairs: params::DEFAULT_POLE_PAIRS,
+            max_duty: params::DEFAULT_MAX_DUTY,
+            speed_filter_alpha: params::DEFAULT_SPEED_FILTER_ALPHA,
+            hall_angle_offset: params::DEFAULT_HALL_ANGLE_OFFSET_DEG, // デフォルトはオフセットなし
+            enable_angle_interpolation: true,                          // デフォルトで有効
             _padding2: [0; 2],
-            openloop_initial_rpm: config::openloop::INITIAL_RPM,
-            openloop_target_rpm: config::openloop::TARGET_RPM,
-            openloop_acceleration: config::openloop::ACCELERATION_RPM_PER_S,
-            openloop_duty_ratio: config::openloop::DUTY_RATIO,
+            calibration_electrical_offset: 0.0, // キャリブレーション未実施
+            calibration_direction_inversed: false,
+            calibration_success: false,
+            _padding_calib: [0; 2],
+            openloop_initial_rpm: params::openloop::DEFAULT_INITIAL_RPM,
+            openloop_target_rpm: params::openloop::DEFAULT_TARGET_RPM,
+            openloop_acceleration: params::openloop::DEFAULT_ACCELERATION_RPM_PER_S,
+            openloop_duty_ratio: params::openloop::DEFAULT_DUTY_RATIO,
             _padding3: 0,
-            pwm_frequency: config::pwm::FREQUENCY.0,
-            pwm_dead_time: config::pwm::DEAD_TIME,
+            pwm_frequency: params::pwm::DEFAULT_FREQUENCY.0,
+            pwm_dead_time: params::pwm::DEFAULT_DEAD_TIME,
             _padding4: 0,
-            can_bitrate: config::can::BITRATE,
-            control_period_us: config::CONTROL_PERIOD_US,
+            can_bitrate: params::can::DEFAULT_BITRATE,
+            control_period_us: params::DEFAULT_CONTROL_PERIOD_US,
             crc32: 0, // CRC計算前は0
         }
     }
@@ -133,18 +150,14 @@ impl StoredConfig {
         let ptr = self as *const Self as *const u8;
         let total_size = core::mem::size_of::<Self>();
         let crc_size = core::mem::size_of::<u32>();
-        unsafe {
-            core::slice::from_raw_parts(ptr, total_size - crc_size)
-        }
+        unsafe { core::slice::from_raw_parts(ptr, total_size - crc_size) }
     }
 
     /// バイト配列として可変参照を取得（シリアライズ用）
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         let ptr = self as *mut Self as *mut u8;
         let size = core::mem::size_of::<Self>();
-        unsafe {
-            core::slice::from_raw_parts_mut(ptr, size)
-        }
+        unsafe { core::slice::from_raw_parts_mut(ptr, size) }
     }
 
     /// バイト配列から構造体を復元
@@ -210,7 +223,10 @@ impl StoredConfig {
 const _: () = {
     const SIZE: usize = core::mem::size_of::<StoredConfig>();
     const MAX_SIZE: usize = 2048; // 2KB
-    assert!(SIZE <= MAX_SIZE, "StoredConfig size exceeds flash page size");
+    assert!(
+        SIZE <= MAX_SIZE,
+        "StoredConfig size exceeds flash page size"
+    );
 };
 
 #[cfg(test)]

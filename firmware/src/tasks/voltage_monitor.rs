@@ -19,16 +19,25 @@ pub async fn voltage_monitor_task(
 
     // 電圧監視コントローラ初期化
     let mut monitor = VoltageMonitor::new(VoltageMonitorConfig {
-        r_upper: 100_000.0,  // 100kΩ（分圧回路の上側抵抗）
-        r_lower: 10_000.0,   // 10kΩ（分圧回路の下側抵抗）
+        r_upper: 33_300.0, // 33.3kΩ（分圧回路の上側抵抗）
+        r_lower: 3_300.0,  // 3.3kΩ（分圧回路の下側抵抗）
         adc_max: 4096,
         vref: 3.3,
         filter_alpha: 0.1,
-        overvoltage_threshold: 30.0,   // 30V以上で過電圧警告
-        undervoltage_threshold: 10.0,  // 10V以下で低電圧警告
+        overvoltage_threshold: 30.0,  // 30V以上で過電圧警告
+        undervoltage_threshold: 10.0, // 10V以下で低電圧警告
     });
 
     info!("Voltage monitor initialized: OV=30V, UV=10V");
+
+    // 初回ADC読み取りでフィルタを初期化（起動時のUNDERVOLTAGE誤検出を防ぐ）
+    let initial_adc = adc.blocking_read(&mut voltage_pin);
+    monitor.initialize_with_adc(initial_adc);  // フィルタを実電圧で初期化
+    let state = monitor.get_state();
+    info!(
+        "Initial voltage: {}V (ADC raw: {}), OV={}, UV={}",
+        state.voltage, initial_adc, state.overvoltage, state.undervoltage
+    );
 
     // 監視周期（100ms）
     let mut ticker = Ticker::every(Duration::from_millis(100));
@@ -41,6 +50,11 @@ pub async fn voltage_monitor_task(
 
         // ADCから電圧を読み取り
         let adc_raw = adc.blocking_read(&mut voltage_pin);
+
+        // デバッグ: ADC生値とADC電圧を計算（33.3kΩ + 3.3kΩ分圧）
+        let v_adc = (adc_raw as f32 / 4096.0) * 3.3;
+        let divider_ratio = (33_300.0 + 3_300.0) / 3_300.0;  // = 11.09倍
+        let v_bus_calc = v_adc * divider_ratio;
 
         // 電圧監視更新
         let state = monitor.update(adc_raw);
@@ -65,9 +79,9 @@ pub async fn voltage_monitor_task(
         log_counter += 1;
         if log_counter >= 10 {
             log_counter = 0;
-            debug!(
-                "[Voltage Monitor] Bus: {}V (ADC: {}), OV: {}, UV: {}",
-                state.voltage, adc_raw, state.overvoltage, state.undervoltage
+            info!(
+                "[Voltage] ADC_raw={}, V_adc={}V, V_bus_calc={}V, V_filtered={}V, ratio={}, OV={}, UV={}",
+                adc_raw, v_adc, v_bus_calc, state.voltage, divider_ratio, state.overvoltage, state.undervoltage
             );
         }
     }

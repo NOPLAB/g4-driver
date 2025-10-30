@@ -9,11 +9,13 @@
 //! - TIM4_CH3 (PB8): Hall H3
 //! - クロック: 170MHz (APB1)
 //!
-//! ## 動作原理
-//! 1. 3つのHall入力がXORされてTI1に接続される（TI1S=1）
-//! 2. いずれかのHallセンサーがエッジを検出すると、TIM4_CCR1にカウンタ値がキャプチャされる
-//! 3. CC1割り込みが発生し、エッジ間の時間から速度を計算
-//! 4. UPDATE割り込みでタイムアウト（低速/停止）を検出
+//! ## 動作原理（参照: HAL_TIMEx_HallSensor_Init）
+//! 1. 3つのHall入力がXORされてTI1に接続される（CR2.TI1S=1）
+//! 2. TI1のエッジ検出がトリガーとして選択される（SMCR.TS=TI1F_ED）
+//! 3. トリガーエッジでカウンターがリセットされる（SMCR.SMS=RESET）
+//! 4. いずれかのHallセンサーがエッジを検出すると、TIM4_CCR1にカウンタ値がキャプチャされる
+//! 5. CC1割り込みが発生し、エッジ間の時間から速度を計算
+//! 6. UPDATE割り込みでタイムアウト（低速/停止）を検出
 
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use embassy_stm32::pac;
@@ -21,13 +23,17 @@ use embassy_stm32::pac;
 /// Hallセンサー状態（グローバル共有）
 pub static HALL_STATE: AtomicU8 = AtomicU8::new(0);
 
-/// 最後のキャプチャ値（タイマーカウント）
+/// 最後のキャプチャ値（タイマーカウント）- デバッグ用
 pub static LAST_CAPTURE: AtomicU32 = AtomicU32::new(0);
 
-/// オーバーフローカウンタ（65536カウントごとにインクリメント）
+/// 最後のオーバーフローカウント - デバッグ用
+pub static LAST_OVERFLOW: AtomicU32 = AtomicU32::new(0);
+
+/// オーバーフローカウンタ（65536カウントごとにインクリメント、キャプチャ時にリセット）
 pub static OVERFLOW_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// 速度計算用：前回のキャプチャからの経過サイクル数
+/// 速度計算用：前回キャプチャ（リセット）からの経過サイクル数
+/// period = (overflow << 16) | capture として計算
 pub static PERIOD_CYCLES: AtomicU32 = AtomicU32::new(0);
 
 /// タイムアウトフラグ（モーター停止検出）
@@ -47,63 +53,90 @@ pub unsafe fn init_hall_timer() {
     rcc.apb1enr1().modify(|w| w.set_tim4en(true)); // TIM4
 
     // 2. GPIO設定（PB6/PB7/PB8をAlternate Function AF2に設定）
-    // PB6: TIM4_CH1
-    gpiob.moder().modify(|w| w.set_moder(6, pac::gpio::vals::Moder::ALTERNATE));
+    // 注: 参照実装（HAL）ではプルアップ無し（NOPULL）
+    //     ハードウェアに外部プルアップ抵抗がある場合は内部プルアップ不要
+
+    // PB6: TIM4_CH1 (Hall H1)
+    gpiob
+        .moder()
+        .modify(|w| w.set_moder(6, pac::gpio::vals::Moder::ALTERNATE));
     gpiob.afr(0).modify(|w| w.set_afr(6, 2)); // AF2 (AFR[0] = AFRL)
-    gpiob.pupdr().modify(|w| w.set_pupdr(6, pac::gpio::vals::Pupdr::FLOATING));
-    gpiob.ospeedr().modify(|w| w.set_ospeedr(6, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
+    gpiob
+        .pupdr()
+        .modify(|w| w.set_pupdr(6, pac::gpio::vals::Pupdr::FLOATING)); // プルアップ無し（参照実装に準拠）
+    gpiob
+        .ospeedr()
+        .modify(|w| w.set_ospeedr(6, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
 
-    // PB7: TIM4_CH2
-    gpiob.moder().modify(|w| w.set_moder(7, pac::gpio::vals::Moder::ALTERNATE));
+    // PB7: TIM4_CH2 (Hall H2)
+    gpiob
+        .moder()
+        .modify(|w| w.set_moder(7, pac::gpio::vals::Moder::ALTERNATE));
     gpiob.afr(0).modify(|w| w.set_afr(7, 2)); // AF2 (AFR[0] = AFRL)
-    gpiob.pupdr().modify(|w| w.set_pupdr(7, pac::gpio::vals::Pupdr::FLOATING));
-    gpiob.ospeedr().modify(|w| w.set_ospeedr(7, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
+    gpiob
+        .pupdr()
+        .modify(|w| w.set_pupdr(7, pac::gpio::vals::Pupdr::FLOATING)); // プルアップ無し（参照実装に準拠）
+    gpiob
+        .ospeedr()
+        .modify(|w| w.set_ospeedr(7, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
 
-    // PB8: TIM4_CH3
-    gpiob.moder().modify(|w| w.set_moder(8, pac::gpio::vals::Moder::ALTERNATE));
+    // PB8: TIM4_CH3 (Hall H3)
+    gpiob
+        .moder()
+        .modify(|w| w.set_moder(8, pac::gpio::vals::Moder::ALTERNATE));
     gpiob.afr(1).modify(|w| w.set_afr(0, 2)); // AF2 (AFR[1] = AFRH, PB8は8番目なのでAFRH[0])
-    gpiob.pupdr().modify(|w| w.set_pupdr(8, pac::gpio::vals::Pupdr::FLOATING));
-    gpiob.ospeedr().modify(|w| w.set_ospeedr(8, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
+    gpiob
+        .pupdr()
+        .modify(|w| w.set_pupdr(8, pac::gpio::vals::Pupdr::FLOATING)); // プルアップ無し（参照実装に準拠）
+    gpiob
+        .ospeedr()
+        .modify(|w| w.set_ospeedr(8, pac::gpio::vals::Ospeedr::VERY_HIGH_SPEED));
 
     // 3. TIM4設定
     // タイマーを停止
     tim4.cr1().modify(|w| w.set_cen(false));
 
     // プリスケーラー設定（初期値: 0、フルスピード170MHz）
-    // 注: PACのAPIによってはw.0に直接アクセスできない場合があるので、
-    // 生のレジスタポインタを使用
-    unsafe {
-        core::ptr::write_volatile(0x4000_0828 as *mut u16, 0); // TIM4_PSC
-        core::ptr::write_volatile(0x4000_082C as *mut u16, 0xFFFF); // TIM4_ARR
-    }
+    tim4.psc().write_value(0); // PSC = 0
+    tim4.arr().write_value(pac::timer::regs::ArrCore(0xFFFF)); // ARR = 65535
 
     // 4. Hall Sensor Interface Mode設定
-    // SMCR.TI1S = 1: CH1/CH2/CH3をXOR -> TI1
+    // CR2.TI1S = 1: CH1/CH2/CH3をXOR -> TI1 (Hall Sensor Mode)
+    // 参照: HAL_TIMEx_HallSensor_Init() in stm32g4xx_hal_tim_ex.c
+    tim4.cr2().modify(|w| {
+        w.set_ti1s(pac::timer::vals::Ti1s::XOR); // TI1S = XOR: 3つのHall入力をXORしてTI1へ
+    });
+
+    // SMCR設定: トリガー選択とスレーブモード
     tim4.smcr().modify(|w| {
-        // TI1Sビットを設定（CH1/CH2/CH3のXOR -> TI1）
-        // 注: SMSは設定しない（内部クロックモード）
-        w.0 |= 1 << 7; // TI1S bit (bit 7)
+        // TS = TI1F_ED (0b100): TI1のエッジ検出をトリガーに選択
+        w.set_ts(pac::timer::vals::Ts::TI1F_ED);
+        // SMS = RESET (0b100): トリガーエッジでカウンターをリセット
+        w.set_sms(pac::timer::vals::Sms::RESET_MODE);
     });
 
     // 5. Input Capture設定（CH1でキャプチャ）
-    // CCMR1_Input: CC1S=01 (IC1はTI1にマップ)、IC1F (フィルタ設定)
+    // CCMR1_Input: CC1S=TRC (IC1はTRCにマップ = TI1にマップ)、IC1F (フィルタ設定)
+    // 参照: TIM_TI1_SetConfig(..., TIM_ICSELECTION_TRC, ...)
     tim4.ccmr_input(0).modify(|w| {
-        w.set_ccs(0, pac::timer::vals::CcmrInputCcs::TI4); // CC1S = 01 (TI1にマップ)
+        w.set_ccs(0, pac::timer::vals::CcmrInputCcs::TRC); // CC1S = TRC (IC1 -> TI1/TRC)
         w.set_icf(0, pac::timer::vals::FilterValue::FCK_INT_N8); // IC1F = 0011 (8サイクルフィルタ)
     });
 
-    // 6. CCER: CC1E=1（キャプチャ有効）、両エッジ検出
+    // 6. CCER: CC1E=1（キャプチャ有効）、立ち上がりエッジのみ
+    // 参照実装では IC1Polarity = RISING のみ
+    // 注: TI1F_EDトリガーにより両エッジが自動的に検出される
     tim4.ccer().modify(|w| {
-        w.0 |= 1 << 0;  // CC1E: Capture enabled (bit 0)
-        w.0 |= 1 << 1;  // CC1P: Capture polarity (bit 1) - 立ち下がりエッジも
-        w.0 |= 1 << 3;  // CC1NP: Capture polarity (bit 3) - 両エッジ検出
+        w.set_cce(0, true); // CC1E: Capture enabled
+        w.set_ccp(0, false); // CC1P: 0 = RISING (立ち上がりエッジのみ)
+        // CC1NP はデフォルト false のまま
     });
 
     // 7. 割り込み設定
     // DIER: CC1IE（キャプチャ割り込み）、UIE（更新割り込み）を有効化
     tim4.dier().modify(|w| {
         w.set_ccie(0, true); // CC1IE: Capture/Compare 1 interrupt enable
-        w.set_uie(true);     // UIE: Update interrupt enable
+        w.set_uie(true); // UIE: Update interrupt enable
     });
 
     // 8. 割り込み有効化（NVIC）
@@ -118,10 +151,8 @@ pub unsafe fn init_hall_timer() {
     }
 
     // 9. カウンタをリセットしてタイマー開始
-    unsafe {
-        core::ptr::write_volatile(0x4000_0824 as *mut u32, 0); // TIM4_CNT
-        core::ptr::write_volatile(0x4000_0810 as *mut u32, 0); // TIM4_SR (ステータスフラグクリア)
-    }
+    tim4.cnt().write_value(pac::timer::regs::CntCore(0)); // CNT = 0
+    tim4.sr().write(|w| w.0 = 0); // ステータスフラグクリア
     tim4.egr().write(|w| w.set_ug(true)); // Update生成（プリスケーラ反映）
 
     tim4.cr1().modify(|w| {
@@ -174,25 +205,16 @@ pub unsafe fn tim4_irq_handler() {
         let hall_state = (h3 << 2) | (h2 << 1) | h1;
 
         // 3. 周期計算（前回キャプチャからの経過サイクル）
-        let last_capture = LAST_CAPTURE.load(Ordering::Relaxed);
-        let last_overflow = overflow; // 簡易実装
-
-        // 32ビット拡張カウンタ値
-        let current_count = (overflow << 16) | capture;
-        let last_count = (last_overflow << 16) | last_capture;
-
-        let period = if current_count > last_count {
-            current_count - last_count
-        } else {
-            // オーバーフロー発生時
-            (0xFFFF_FFFF - last_count) + current_count + 1
-        };
+        // オーバーフローカウンタはキャプチャごとにリセットされるため、
+        // 周期 = overflow * 65536 + capture が前回リセットからの絶対経過サイクル数になる
+        let period = (overflow << 16) | capture;
 
         // 4. グローバル変数更新
         HALL_STATE.store(hall_state, Ordering::Relaxed);
         LAST_CAPTURE.store(capture, Ordering::Relaxed);
+        LAST_OVERFLOW.store(overflow, Ordering::Relaxed); // デバッグ用に保持
         PERIOD_CYCLES.store(period, Ordering::Relaxed);
-        OVERFLOW_COUNTER.store(0, Ordering::Relaxed); // リセット
+        OVERFLOW_COUNTER.store(0, Ordering::Relaxed); // リセット（次のエッジまでの計測開始）
         TIMEOUT_FLAG.store(0, Ordering::Relaxed); // タイムアウト解除
     }
 }
@@ -205,7 +227,7 @@ pub unsafe extern "C" fn TIM4() {
     tim4_irq_handler();
 }
 
-/// Hall状態を取得
+/// Hall状態を取得（TIM4割り込みでキャプチャされた値）
 #[inline(always)]
 pub fn get_hall_state() -> u8 {
     HALL_STATE.load(Ordering::Relaxed)
@@ -221,6 +243,18 @@ pub fn get_period_cycles() -> u32 {
 #[inline(always)]
 pub fn is_timeout() -> bool {
     TIMEOUT_FLAG.load(Ordering::Relaxed) != 0
+}
+
+/// TIM4の状態をリセット（モーター停止時に使用）
+///
+/// モーター停止時に古い周期データをクリアします。
+/// 注: OpenLoop→FOC切り替え時は呼ばない（リアルタイムデータを保持）
+pub fn reset_state() {
+    LAST_CAPTURE.store(0, Ordering::Relaxed);
+    LAST_OVERFLOW.store(0, Ordering::Relaxed);
+    OVERFLOW_COUNTER.store(0, Ordering::Relaxed);
+    PERIOD_CYCLES.store(0, Ordering::Relaxed);
+    TIMEOUT_FLAG.store(0, Ordering::Relaxed); // タイムアウトフラグもクリア
 }
 
 /// 周期から速度（RPM）を計算

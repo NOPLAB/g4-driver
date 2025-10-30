@@ -4,8 +4,6 @@
 mod benchmark;
 mod can_protocol;
 mod config;
-mod config_storage;
-mod eeprom;
 mod fmt;
 mod foc;
 mod hall_tim;
@@ -46,18 +44,39 @@ async fn main(spawner: Spawner) {
     let config = hardware::create_clock_config();
     let p = embassy_stm32::init(config);
 
-    info!("========================================");
-    info!("STM32G431VB BLDC Motor Driver");
-    info!("========================================");
+    info!("═══════════════════════════════════════════════════════════════════");
+    info!("");
+    info!("    ██████╗ ██╗  ██╗    ██████╗ ██████╗ ██╗██╗   ██╗███████╗██████╗ ");
+    info!("   ██╔════╝ ██║  ██║    ██╔══██╗██╔══██╗██║██║   ██║██╔════╝██╔══██╗");
+    info!("   ██║  ███╗███████║    ██║  ██║██████╔╝██║██║   ██║█████╗  ██████╔╝");
+    info!("   ██║   ██║╚════██║    ██║  ██║██╔══██╗██║╚██╗ ██╔╝██╔══╝  ██╔══██╗");
+    info!("   ╚██████╔╝     ██║    ██████╔╝██║  ██║██║ ╚████╔╝ ███████╗██║  ██║");
+    info!("    ╚═════╝      ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝");
+    info!("");
+    info!("        BLDC Motor Controller • STM32G431VB @ 170MHz");
+    info!("");
+    info!("═══════════════════════════════════════════════════════════════════");
 
     // フラッシュとCRC初期化（設定ロード用）
-    let mut flash = Flash::new_blocking(p.FLASH);
-    let crc_config = CrcConfig::default();
-    let mut crc = Crc::new(p.CRC, crc_config);
+    // Blocking版で設定を読み込む
+    let mut flash_blocking = Flash::new_blocking(p.FLASH);
+
+    // CRC初期化（STM32デフォルト設定: CRC-32、poly=0x04C11DB7）
+    let crc_peripheral = p.CRC;
+    let crc_config = CrcConfig::new(
+        embassy_stm32::crc::InputReverseConfig::None,
+        false, // reverse_out
+        embassy_stm32::crc::PolySize::Width32,
+        0xFFFFFFFF, // crc_init_value
+        0x04C11DB7, // crc_poly (CRC-32)
+    )
+    .unwrap();
+    let mut crc_blocking = Crc::new(crc_peripheral, crc_config);
 
     // 設定をフラッシュから読み込み（失敗時はデフォルト初期化）
     info!("Loading configuration from flash...");
-    let loaded_config = eeprom::load_or_initialize_config(&mut flash, &mut crc).await;
+    let loaded_config =
+        config::load_or_initialize_config(&mut flash_blocking, &mut crc_blocking).await;
 
     // グローバル状態に設定を適用
     {
@@ -71,7 +90,10 @@ async fn main(spawner: Spawner) {
         *crc_valid = true; // load_or_initialize_configが成功したらCRC有効
 
         info!("Config loaded: version={}", loaded_config.version);
-        info!("  PI gains: Kp={}, Ki={}", loaded_config.speed_kp, loaded_config.speed_ki);
+        info!(
+            "  PI gains: Kp={}, Ki={}",
+            loaded_config.speed_kp, loaded_config.speed_ki
+        );
         info!("  Max voltage: {}V", loaded_config.max_voltage);
         info!("  Pole pairs: {}", loaded_config.pole_pairs);
     }
@@ -81,6 +103,45 @@ async fn main(spawner: Spawner) {
         let mut gains = state::SPEED_PI_GAINS.lock().await;
         *gains = (loaded_config.speed_kp, loaded_config.speed_ki);
     }
+
+    // キャリブレーション結果をCALIBRATION_RESULTに適用
+    {
+        let mut calib_result = state::CALIBRATION_RESULT.lock().await;
+        calib_result.electrical_offset = loaded_config.calibration_electrical_offset;
+        calib_result.direction_inversed = loaded_config.calibration_direction_inversed;
+        calib_result.success = loaded_config.calibration_success;
+
+        if loaded_config.calibration_success {
+            info!("  Calibration data loaded:");
+            info!(
+                "    Electrical offset: {} rad",
+                loaded_config.calibration_electrical_offset
+            );
+            info!(
+                "    Direction inversed: {}",
+                loaded_config.calibration_direction_inversed
+            );
+        } else {
+            info!("  No calibration data found (calibration not performed)");
+        }
+    }
+
+    // CAN task用にFlash/CRCをAsync版で再初期化
+    // Peripheralsを再取得（flash_blockingとcrc_blockingはdrop）
+    drop(flash_blocking);
+    drop(crc_blocking);
+
+    let p2 = unsafe { embassy_stm32::Peripherals::steal() };
+    let flash = Flash::new_blocking(p2.FLASH); // new_blockingしか使えない
+    let crc_config2 = CrcConfig::new(
+        embassy_stm32::crc::InputReverseConfig::None,
+        false,
+        embassy_stm32::crc::PolySize::Width32,
+        0xFFFFFFFF,
+        0x04C11DB7,
+    )
+    .unwrap();
+    let crc = Crc::new(p2.CRC, crc_config2);
 
     // LED初期化＆タスク起動
     let led1 = Output::new(p.PC13, Level::High, Speed::Low);
@@ -99,7 +160,7 @@ async fn main(spawner: Spawner) {
         can::filter::StandardFilterSlot::_0,
         can::filter::StandardFilter::accept_all_into_fifo0(),
     );
-    can_configurator.set_bitrate(config::can::BITRATE);
+    can_configurator.set_bitrate(config::can::DEFAULT_BITRATE);
     let can = can_configurator.start(can::OperatingMode::NormalOperationMode);
     spawner.spawn(can_task(can, flash, crc)).unwrap();
 
@@ -127,21 +188,39 @@ async fn main(spawner: Spawner) {
     // PWM初期化（TIM1、3相補完PWM）
     let mut uvw_pwm = ComplementaryPwm::new(
         p.TIM1,
-        Some(PwmPin::new(p.PE9, embassy_stm32::gpio::OutputType::PushPull)),
-        Some(ComplementaryPwmPin::new(p.PE8, embassy_stm32::gpio::OutputType::PushPull)),
-        Some(PwmPin::new(p.PE11, embassy_stm32::gpio::OutputType::PushPull)),
-        Some(ComplementaryPwmPin::new(p.PE10, embassy_stm32::gpio::OutputType::PushPull)),
-        Some(PwmPin::new(p.PE13, embassy_stm32::gpio::OutputType::PushPull)),
-        Some(ComplementaryPwmPin::new(p.PE12, embassy_stm32::gpio::OutputType::PushPull)),
+        Some(PwmPin::new(
+            p.PE9,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(ComplementaryPwmPin::new(
+            p.PE8,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(PwmPin::new(
+            p.PE11,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(ComplementaryPwmPin::new(
+            p.PE10,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(PwmPin::new(
+            p.PE13,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(ComplementaryPwmPin::new(
+            p.PE12,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
         None,
         None,
-        config::pwm::FREQUENCY,
+        config::pwm::DEFAULT_FREQUENCY,
         CountingMode::EdgeAlignedUp,
     );
     uvw_pwm.disable(Channel::Ch1);
     uvw_pwm.disable(Channel::Ch2);
     uvw_pwm.disable(Channel::Ch3);
-    uvw_pwm.set_dead_time(config::pwm::DEAD_TIME);
+    uvw_pwm.set_dead_time(config::pwm::DEFAULT_DEAD_TIME);
     uvw_pwm.enable(Channel::Ch1);
     uvw_pwm.enable(Channel::Ch2);
     uvw_pwm.enable(Channel::Ch3);
@@ -161,16 +240,6 @@ async fn main(spawner: Spawner) {
 
     // モーター制御タスクを起動
     spawner.spawn(motor_control_task(uvw_pwm)).unwrap();
-
-    info!("System initialized successfully");
-    info!("Send CAN commands to control motor:");
-    info!("  - 0x100: Speed command (f32 RPM)");
-    info!("  - 0x101: PI gains (Kp, Ki as f32)");
-    info!("  - 0x102: Enable motor (u8: 0=off, 1=on)");
-    info!("  - 0x103: Save config to flash");
-    info!("  - 0x104: Reload config from flash");
-    info!("  - 0x105: Reset config to defaults");
-    info!("  - 0x000: Emergency stop");
 
     // メインループ（将来の拡張用）
     loop {

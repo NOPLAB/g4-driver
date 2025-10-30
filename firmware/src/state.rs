@@ -6,19 +6,21 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 
 use crate::can_protocol::MotorStatus;
-use crate::config::{DEFAULT_SPEED_KI, DEFAULT_SPEED_KP};
-use crate::config_storage::StoredConfig;
+use crate::config::{DEFAULT_SPEED_KI, DEFAULT_SPEED_KP, StoredConfig};
+use crate::foc::{CalibrationResult, ControlMode};
 use crate::voltage_monitor::VoltageMonitorState;
 
 /// 目標速度 [RPM]
-pub static TARGET_SPEED: Mutex<ThreadModeRawMutex, f32> = Mutex::new(0.0);
+/// デバッグ用: 起動時に1000 RPMに設定
+pub static TARGET_SPEED: Mutex<ThreadModeRawMutex, f32> = Mutex::new(1000.0);
 
 /// 速度PIコントローラのゲイン (Kp, Ki)
 pub static SPEED_PI_GAINS: Mutex<ThreadModeRawMutex, (f32, f32)> =
     Mutex::new((DEFAULT_SPEED_KP, DEFAULT_SPEED_KI));
 
 /// モーター有効/無効フラグ
-pub static MOTOR_ENABLE: Mutex<ThreadModeRawMutex, bool> = Mutex::new(false);
+/// デバッグ用: 起動時に有効化
+pub static MOTOR_ENABLE: Mutex<ThreadModeRawMutex, bool> = Mutex::new(true);
 
 /// モーターステータス（CAN送信用）
 pub static MOTOR_STATUS: Mutex<ThreadModeRawMutex, MotorStatus> = Mutex::new(MotorStatus::new());
@@ -36,3 +38,18 @@ pub static CONFIG_VERSION: Mutex<ThreadModeRawMutex, u16> = Mutex::new(0);
 
 /// CRC検証フラグ（CAN送信用）
 pub static CONFIG_CRC_VALID: Mutex<ThreadModeRawMutex, bool> = Mutex::new(false);
+
+/// モーター制御モード（ClosedLoopFoc / Calibration等）
+pub static CONTROL_MODE: Mutex<ThreadModeRawMutex, ControlMode> =
+    Mutex::new(ControlMode::ClosedLoopFoc);
+
+/// キャリブレーション開始フラグ
+pub static CALIBRATION_REQUEST: Mutex<ThreadModeRawMutex, bool> = Mutex::new(false);
+
+/// キャリブレーション結果
+pub static CALIBRATION_RESULT: Mutex<ThreadModeRawMutex, CalibrationResult> =
+    Mutex::new(CalibrationResult {
+        electrical_offset: 0.0,
+        direction_inversed: false,
+        success: false,
+    });

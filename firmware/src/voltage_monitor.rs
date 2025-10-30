@@ -25,15 +25,16 @@ pub struct VoltageMonitorConfig {
 impl Default for VoltageMonitorConfig {
     fn default() -> Self {
         Self {
-            // デフォルト分圧回路: 100kΩ + 10kΩ（分圧比 11:1）
-            // 最大入力電圧: 3.3V * 11 = 36.3V
-            r_upper: 100_000.0,
-            r_lower: 10_000.0,
+            // 分圧回路: 33.3kΩ + 3.3kΩ（抵抗比 10.09:1、電圧変換係数 11.09倍）
+            // V_bus = V_adc * (33.3k + 3.3k) / 3.3k = V_adc * 11.09
+            // 最大入力電圧: 3.3V * 11.09 ≈ 36.6V
+            r_upper: 33_300.0,  // 上側抵抗 33.3kΩ
+            r_lower: 3_300.0,   // 下側抵抗 3.3kΩ
             adc_max: 4096,
             vref: 3.3,
-            filter_alpha: 0.1, // 緩やかなフィルタ
-            overvoltage_threshold: 30.0,   // 30V以上で過電圧
-            undervoltage_threshold: 10.0,  // 10V以下で低電圧
+            filter_alpha: 0.1,            // 緩やかなフィルタ
+            overvoltage_threshold: 30.0,  // 30V以上で過電圧
+            undervoltage_threshold: 10.0, // 10V以下で低電圧
         }
     }
 }
@@ -166,5 +167,13 @@ impl VoltageMonitor {
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = VoltageMonitorState::new();
+    }
+
+    /// フィルタを初期電圧で初期化（起動時の誤検出防止用）
+    pub fn initialize_with_adc(&mut self, adc_raw: u16) {
+        let voltage = self.adc_to_voltage(adc_raw);
+        self.state.voltage = voltage;
+        self.state.overvoltage = voltage > self.config.overvoltage_threshold;
+        self.state.undervoltage = voltage < self.config.undervoltage_threshold;
     }
 }

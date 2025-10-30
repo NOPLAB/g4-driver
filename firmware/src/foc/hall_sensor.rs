@@ -1,46 +1,54 @@
 // Hall sensor processing for BLDC motor position and speed estimation
+// Uses TIM4 hardware Hall interface for high-precision edge detection and speed calculation
+// Implements foc-simple compatible mechanical angle based calculation
 
 use crate::fmt::*;
+use crate::hall_tim;
+use core::f32::consts::TAU;
 
-/// Hall sensor states to electrical angle mapping (in degrees)
-/// Hall state format: (H3 << 2) | (H2 << 1) | H1
-/// Valid states are 1-6 (0b001 to 0b110), invalid states are 0 (0b000) and 7 (0b111)
-/// Using sector CENTER angles for better FOC accuracy
-const HALL_ANGLE_TABLE: [Option<f32>; 8] = [
-    None,        // 0b000: Invalid state
-    Some(30.0),  // 0b001: Sector 1 center
-    Some(90.0),  // 0b010: Sector 2 center
-    Some(150.0), // 0b011: Sector 3 center
-    Some(210.0), // 0b100: Sector 4 center
-    Some(270.0), // 0b101: Sector 5 center
-    Some(330.0), // 0b110: Sector 6 center
-    None,        // 0b111: Invalid state
+/// Hall state lookup table (foc-simple compatible)
+/// Maps raw hall state (1-6) to normalized index (0-5)
+/// Valid transition sequence: 1 -> 3 -> 2 -> 6 -> 4 -> 5 -> 1 (CW rotation)
+/// Index mapping: [invalid, 0, 2, 1, 4, 5, 3, invalid]
+/// Raw state:      [0,       1, 2, 3, 4, 5, 6, 7]
+const HALL_STATE_TABLE: [u8; 8] = [
+    255, // 0b000: Invalid state (use 255 as marker)
+    0,   // 0b001: State 1 -> index 0
+    2,   // 0b010: State 2 -> index 2
+    1,   // 0b011: State 3 -> index 1
+    4,   // 0b100: State 4 -> index 4
+    5,   // 0b101: State 5 -> index 5
+    3,   // 0b110: State 6 -> index 3
+    255, // 0b111: Invalid state (use 255 as marker)
 ];
 
 /// Hall sensor state machine for position and speed estimation
+/// Implements foc-simple compatible mechanical angle based calculation
+/// Relies on hall_tim (TIM4 hardware) for edge detection and speed calculation
 pub struct HallSensor {
-    /// Previous hall state (0-7)
+    /// Previous normalized hall state (0-5)
     prev_state: u8,
-    /// Current electrical angle in radians
-    electrical_angle: f32,
-    /// Hall sector base angle in radians (updated at each edge)
-    hall_sector_angle: f32,
-    /// Current speed in RPM
+    /// Current mechanical angle in radians (shaft angle)
+    mechanical_angle: f32,
+    /// Hall index base (increments by 6 each electrical revolution)
+    hall_idx_base: u32,
+    /// Maximum hall index (pole_pairs * 6)
+    hall_idx_max: u32,
+    /// Angle per hall state (mechanical angle) = TAU / hall_idx_max
+    angle_per_state: f32,
+    /// Current speed in RPM (from TIM4)
     speed_rpm: f32,
-    /// Accumulated time since last hall edge (seconds)
+    /// Time since last edge (for interpolation)
     time_since_edge: f32,
     /// Low-pass filter coefficient for speed (0.0 - 1.0)
     /// Lower value = more filtering
     speed_filter_alpha: f32,
     /// Number of pole pairs
     pole_pairs: u8,
-    /// Flag indicating if this is the first update
-    first_update: bool,
-    /// Timeout threshold for speed estimation (seconds)
-    /// If no edge detected within this time, speed is set to 0
-    edge_timeout: f32,
     /// Enable angle interpolation between Hall edges
     enable_interpolation: bool,
+    /// Electrical offset in radians (calibration value)
+    electrical_offset: f32,
 }
 
 impl HallSensor {
@@ -48,19 +56,23 @@ impl HallSensor {
     ///
     /// # Arguments
     /// * `pole_pairs` - Number of pole pairs in the motor
-    /// * `speed_filter_alpha` - Low-pass filter coefficient (0.0-1.0, default 0.1)
+    /// * `speed_filter_alpha` - Low-pass filter coefficient (0.0-1.0, foc-simple uses 0.05)
     pub fn new(pole_pairs: u8, speed_filter_alpha: f32) -> Self {
+        let hall_idx_max = (pole_pairs as u32) * 6;
+        let angle_per_state = TAU / (hall_idx_max as f32);
+
         Self {
-            prev_state: 0,
-            electrical_angle: 0.0,
-            hall_sector_angle: 0.0,
+            prev_state: 255, // Invalid initial state
+            mechanical_angle: 0.0,
+            hall_idx_base: 0,
+            hall_idx_max,
+            angle_per_state,
             speed_rpm: 0.0,
             time_since_edge: 0.0,
             speed_filter_alpha: speed_filter_alpha.clamp(0.0, 1.0),
             pole_pairs,
-            first_update: true,
-            edge_timeout: 1.0, // 1 second timeout (< 60 RPM for 7 pole pairs)
             enable_interpolation: true, // Enable angle interpolation by default
+            electrical_offset: 0.0,
         }
     }
 
@@ -76,112 +88,168 @@ impl HallSensor {
     }
 
     /// Update hall sensor state and estimate position/speed
+    /// Uses foc-simple compatible mechanical angle based calculation
+    /// Uses TIM4 hardware for both speed calculation and Hall state reading
     ///
     /// # Arguments
-    /// * `hall_state` - Current hall state (0-7)
-    /// * `dt` - Time step since last update (seconds)
+    /// * `dt` - Time step since last update (seconds) - used for angle interpolation
     ///
     /// # Returns
     /// Tuple of (electrical_angle in radians, speed in RPM)
-    pub fn update(&mut self, hall_state: u8, dt: f32) -> (f32, f32) {
-        // Validate hall state
-        if !Self::is_valid_state(hall_state) {
-            error!("Invalid hall state: {}", hall_state);
+    pub fn update(&mut self, dt: f32) -> (f32, f32) {
+        // Get Hall state from TIM4 interrupt handler (captured on edge)
+        let raw_hall_state = hall_tim::get_hall_state();
 
-            // Even with invalid state, accumulate time for timeout detection
+        // Validate hall state (throttle error logging to avoid flooding)
+        if !Self::is_valid_state(raw_hall_state) {
+            static mut ERROR_LOG_COUNTER: u32 = 0;
+            unsafe {
+                ERROR_LOG_COUNTER += 1;
+                // Log error only once every 2500 calls (1 second at 2.5kHz)
+                if ERROR_LOG_COUNTER >= 2500 {
+                    ERROR_LOG_COUNTER = 0;
+                    error!("Invalid hall state: {} (repeated, throttling log)", raw_hall_state);
+                }
+            }
+
+            // Check timeout from TIM4
+            if hall_tim::is_timeout() {
+                self.speed_rpm = 0.0;
+                self.time_since_edge = 0.0;
+            } else {
+                self.time_since_edge += dt;
+            }
+
+            // Calculate electrical angle from mechanical angle
+            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            return (electrical_angle, self.speed_rpm);
+        }
+
+        // Convert raw hall state to normalized index using lookup table (foc-simple compatible)
+        let normalized_state = HALL_STATE_TABLE[raw_hall_state as usize];
+        if normalized_state == 255 {
+            // Invalid state (should not happen after is_valid_state check, but safety check)
+            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            return (electrical_angle, self.speed_rpm);
+        }
+
+        // Get period from TIM4 and calculate instant speed
+        let period_cycles = hall_tim::get_period_cycles();
+
+        // Check for timeout
+        if hall_tim::is_timeout() || period_cycles == 0 {
+            self.speed_rpm = 0.0;
+            self.time_since_edge = 0.0;
+
+            // Calculate mechanical angle from hall_idx (discrete, no interpolation)
+            let hall_state_idx = self.hall_idx_base + (normalized_state as u32);
+            self.mechanical_angle = (hall_state_idx as f32) * self.angle_per_state;
+
+            // Normalize mechanical angle to [0, TAU)
+            while self.mechanical_angle >= TAU {
+                self.mechanical_angle -= TAU;
+            }
+
+            // Calculate electrical angle: mechanical_angle * pole_pairs - offset
+            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+            return (electrical_angle, self.speed_rpm);
+        }
+
+        // Calculate instant speed from TIM4 period
+        let instant_rpm = hall_tim::calculate_speed_rpm(period_cycles, self.pole_pairs);
+
+        // Detect state change (hall edge)
+        let state_changed = normalized_state != self.prev_state && self.prev_state != 255;
+
+        if state_changed {
+            // Handle hall index wrapping (foc-simple compatible)
+            // State 0 after state 5 means we completed an electrical revolution
+            if normalized_state == 0 && self.prev_state == 5 {
+                self.hall_idx_base += 6;
+                if self.hall_idx_base >= self.hall_idx_max {
+                    self.hall_idx_base = 0; // Wrap around after full mechanical revolution
+                }
+            }
+            // State 5 after state 0 means we're going backwards
+            else if normalized_state == 5 && self.prev_state == 0 {
+                if self.hall_idx_base < 6 {
+                    self.hall_idx_base = self.hall_idx_max - 6;
+                } else {
+                    self.hall_idx_base -= 6;
+                }
+            }
+
+            // Apply low-pass filter to speed (foc-simple formula: new = (instant + 19*old)/20 for alpha=0.05)
+            // Equivalent to: new = alpha*instant + (1-alpha)*old where alpha = 1/20 = 0.05
+            self.speed_rpm = self.speed_filter_alpha * instant_rpm
+                + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
+
+            trace!(
+                "Hall edge: {} -> {} (normalized: {} -> {}), period={} cycles, instant_rpm={}, filtered_rpm={}",
+                self.prev_state,
+                normalized_state,
+                self.prev_state,
+                normalized_state,
+                period_cycles,
+                instant_rpm,
+                self.speed_rpm
+            );
+
+            // Reset edge timer
+            self.time_since_edge = 0.0;
+
+            // Update previous state
+            self.prev_state = normalized_state;
+        } else {
+            // Accumulate time since last edge
             self.time_since_edge += dt;
 
-            // Check for timeout and set speed to 0 if motor likely stopped
-            if self.time_since_edge > self.edge_timeout {
-                self.speed_rpm = 0.0;
-            }
-
-            // Keep previous electrical angle and current speed
-            return (self.electrical_angle, self.speed_rpm);
+            // Update filtered speed even without edge (for smoother response)
+            self.speed_rpm = self.speed_filter_alpha * instant_rpm
+                + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
         }
 
-        // Get electrical angle from lookup table
-        if let Some(angle_deg) = HALL_ANGLE_TABLE[hall_state as usize] {
-            // Convert degrees to radians
-            let angle_rad = angle_deg * 0.017453293; // PI / 180
+        // Calculate mechanical angle from hall index (foc-simple method)
+        let hall_state_idx = self.hall_idx_base + (normalized_state as u32);
+        let base_mechanical_angle = (hall_state_idx as f32) * self.angle_per_state;
 
-            // Detect state change (hall edge)
-            if hall_state != self.prev_state && !self.first_update {
-                // Calculate speed based on time between edges
-                // Each hall edge represents 60 electrical degrees
-                let electrical_degrees_per_edge = 60.0;
-                let mechanical_degrees_per_edge =
-                    electrical_degrees_per_edge / self.pole_pairs as f32;
+        // Apply angle interpolation if enabled and motor is moving
+        if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
+            // Calculate mechanical angular velocity (rad/s)
+            let mechanical_omega = self.speed_rpm * (TAU / 60.0); // RPM to rad/s (2*PI/60)
 
-                if self.time_since_edge > 0.0 {
-                    // RPM = (degrees per edge / time) * (60 sec/min) / (360 deg/rev)
-                    let instant_rpm =
-                        (mechanical_degrees_per_edge / self.time_since_edge) * (60.0 / 360.0);
-
-                    // Apply low-pass filter to smooth speed
-                    self.speed_rpm = self.speed_filter_alpha * instant_rpm
-                        + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
-
-                    trace!(
-                        "Hall edge: {} -> {}, dt={}s, instant_rpm={}, filtered_rpm={}",
-                        self.prev_state,
-                        hall_state,
-                        self.time_since_edge,
-                        instant_rpm,
-                        self.speed_rpm
-                    );
-                }
-
-                // Reset edge timer
-                self.time_since_edge = 0.0;
-
-                // Update hall sector base angle
-                self.hall_sector_angle = angle_rad;
-            } else {
-                // Accumulate time since last edge
-                self.time_since_edge += dt;
-
-                // If too much time has passed without an edge, assume motor stopped
-                if self.time_since_edge > self.edge_timeout {
-                    self.speed_rpm = 0.0;
-                }
-            }
-
-            // Update electrical angle with interpolation
-            if self.enable_interpolation && self.speed_rpm > 0.0 && !self.first_update {
-                // Calculate electrical angular velocity (rad/s)
-                let electrical_rpm = self.speed_rpm * self.pole_pairs as f32;
-                let electrical_omega = electrical_rpm * (core::f32::consts::TAU / 60.0); // RPM to rad/s (2*PI/60)
-
-                // Interpolate angle based on time since last edge
-                let angle_increment = electrical_omega * self.time_since_edge;
-                self.electrical_angle = self.hall_sector_angle + angle_increment;
-
-                // Normalize angle to [0, 2π)
-                use core::f32::consts::TAU;
-                while self.electrical_angle >= TAU {
-                    self.electrical_angle -= TAU;
-                }
-                while self.electrical_angle < 0.0 {
-                    self.electrical_angle += TAU;
-                }
-            } else {
-                // No interpolation: use discrete Hall sensor angle
-                self.electrical_angle = angle_rad;
-                self.hall_sector_angle = angle_rad;
-            }
-
-            self.prev_state = hall_state;
-            self.first_update = false;
+            // Interpolate angle based on time since last edge
+            let angle_increment = mechanical_omega * self.time_since_edge;
+            self.mechanical_angle = base_mechanical_angle + angle_increment;
+        } else {
+            // No interpolation or very low speed: use discrete Hall sensor angle
+            self.mechanical_angle = base_mechanical_angle;
         }
 
-        (self.electrical_angle, self.speed_rpm)
+        // Normalize mechanical angle to [0, TAU)
+        while self.mechanical_angle >= TAU {
+            self.mechanical_angle -= TAU;
+        }
+        while self.mechanical_angle < 0.0 {
+            self.mechanical_angle += TAU;
+        }
+
+        // Calculate electrical angle: mechanical_angle * pole_pairs - offset (foc-simple formula)
+        let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+        (electrical_angle, self.speed_rpm)
     }
 
     /// Get current electrical angle in radians
     #[allow(dead_code)]
     pub fn get_electrical_angle(&self) -> f32 {
-        self.electrical_angle
+        self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset
+    }
+
+    /// Get current mechanical angle in radians
+    pub fn get_mechanical_angle(&self) -> f32 {
+        self.mechanical_angle
     }
 
     /// Get current speed in RPM
@@ -192,12 +260,22 @@ impl HallSensor {
 
     /// Reset the hall sensor state
     pub fn reset(&mut self) {
-        self.prev_state = 0;
-        self.electrical_angle = 0.0;
-        self.hall_sector_angle = 0.0;
+        self.prev_state = 255; // Invalid state
+        self.mechanical_angle = 0.0;
+        self.hall_idx_base = 0;
         self.speed_rpm = 0.0;
         self.time_since_edge = 0.0;
-        self.first_update = true;
+    }
+
+    /// Reset speed filter and interpolation timer to a specific speed value
+    /// This is useful when transitioning from OpenLoop to FOC mode to avoid
+    /// transient effects from the low-pass filter
+    ///
+    /// # Arguments
+    /// * `new_speed` - Speed value to set in RPM
+    pub fn reset_speed_filter(&mut self, new_speed: f32) {
+        self.speed_rpm = new_speed;
+        self.time_since_edge = 0.0;
     }
 
     /// Enable or disable angle interpolation
@@ -225,6 +303,24 @@ impl HallSensor {
     pub fn set_filter_alpha(&mut self, alpha: f32) {
         self.speed_filter_alpha = alpha.clamp(0.0, 1.0);
     }
+
+    /// Set the electrical offset (calibration value)
+    ///
+    /// # Arguments
+    /// * `offset_rad` - Electrical offset in radians
+    ///
+    /// This is used to calibrate the motor. The electrical offset is the difference
+    /// between the Hall sensor zero position and the motor's magnetic zero position.
+    #[allow(dead_code)]
+    pub fn set_electrical_offset(&mut self, offset_rad: f32) {
+        self.electrical_offset = offset_rad;
+    }
+
+    /// Get the electrical offset
+    #[allow(dead_code)]
+    pub fn get_electrical_offset(&self) -> f32 {
+        self.electrical_offset
+    }
 }
 
 #[cfg(test)]
@@ -240,11 +336,43 @@ mod tests {
     }
 
     #[test]
-    fn test_angle_lookup() {
-        assert_eq!(HALL_ANGLE_TABLE[1], Some(30.0));
-        assert_eq!(HALL_ANGLE_TABLE[2], Some(90.0));
-        assert_eq!(HALL_ANGLE_TABLE[6], Some(330.0));
-        assert_eq!(HALL_ANGLE_TABLE[0], None);
-        assert_eq!(HALL_ANGLE_TABLE[7], None);
+    fn test_hall_state_table() {
+        // Test state mapping (foc-simple compatible)
+        assert_eq!(HALL_STATE_TABLE[0], 255); // Invalid
+        assert_eq!(HALL_STATE_TABLE[1], 0);   // State 1 -> index 0
+        assert_eq!(HALL_STATE_TABLE[2], 2);   // State 2 -> index 2
+        assert_eq!(HALL_STATE_TABLE[3], 1);   // State 3 -> index 1
+        assert_eq!(HALL_STATE_TABLE[4], 4);   // State 4 -> index 4
+        assert_eq!(HALL_STATE_TABLE[5], 5);   // State 5 -> index 5
+        assert_eq!(HALL_STATE_TABLE[6], 3);   // State 6 -> index 3
+        assert_eq!(HALL_STATE_TABLE[7], 255); // Invalid
+    }
+
+    #[test]
+    fn test_angle_calculation() {
+        // For pole_pairs = 6, hall_idx_max = 36
+        // angle_per_state = TAU / 36 = 0.174533 rad (10 degrees)
+        let pole_pairs = 6;
+        let hall_idx_max = (pole_pairs as u32) * 6; // 36
+        let angle_per_state = TAU / (hall_idx_max as f32);
+
+        // Expected: ~0.174533 rad per state (10 degrees mechanical)
+        let expected_deg = 360.0 / 36.0; // 10 degrees
+        let expected_rad = expected_deg * core::f32::consts::PI / 180.0;
+
+        assert!((angle_per_state - expected_rad).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_electrical_angle_calculation() {
+        // Test electrical angle = mechanical_angle * pole_pairs - offset
+        let sensor = HallSensor::new(6, 0.05);
+
+        // With zero mechanical angle and zero offset
+        assert_eq!(sensor.get_electrical_angle(), 0.0);
+
+        // mechanical_angle = 0.174533 rad (10 deg), pole_pairs = 6
+        // electrical_angle should be 1.047198 rad (60 deg)
+        // This is because: 10 deg mechanical * 6 pole_pairs = 60 deg electrical
     }
 }

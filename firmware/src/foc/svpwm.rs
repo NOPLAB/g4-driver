@@ -20,27 +20,38 @@ const SQRT3: f32 = 1.732_050_8; // sqrt(3)
 /// Based on: https://github.com/calebfletcher/foc
 ///
 /// # Arguments
-/// * `v_alpha` - Alpha-axis voltage command
-/// * `v_beta` - Beta-axis voltage command
-/// * `v_dc` - DC bus voltage (not used in this implementation)
+/// * `v_alpha` - Alpha-axis voltage command (volts)
+/// * `v_beta` - Beta-axis voltage command (volts)
+/// * `v_dc` - DC bus voltage (volts)
 /// * `max_duty` - Maximum duty cycle value (e.g., 100 for 0-100 range)
 ///
 /// # Returns
 /// Tuple of (duty_u, duty_v, duty_w) as u16 values
 ///
 /// # Algorithm
-/// 1. Convert alpha/beta to x/y/z coordinates
-/// 2. Determine sector (1-6) based on signs of x/y/z
-/// 3. Calculate duty cycles directly from x/y/z values
-/// 4. Convert from range [-1, 1] to [0, max_duty]
-pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, _v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
-    // Convert alpha/beta to x/y/z coordinates
+/// 1. Normalize alpha/beta voltages by DC bus voltage
+/// 2. Convert normalized alpha/beta to x/y/z coordinates
+/// 3. Determine sector (1-6) based on signs of x/y/z
+/// 4. Calculate duty cycles directly from x/y/z values
+/// 5. Convert from range [-1, 1] to [0, max_duty]
+pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
+    // Prevent division by zero
+    if v_dc <= 0.0 {
+        return (max_duty / 2, max_duty / 2, max_duty / 2);
+    }
+
+    // Normalize voltages by DC bus voltage
+    // This maps the voltage commands to the range that can be achieved by the inverter
+    let v_alpha_norm = v_alpha / v_dc;
+    let v_beta_norm = v_beta / v_dc;
+
+    // Convert normalized alpha/beta to x/y/z coordinates
     // This transformation maps the alpha-beta plane to three axes
     // that correspond to the six sectors of SVPWM
-    let sqrt_3_alpha = SQRT3 * v_alpha;
-    let x = v_beta;
-    let y = (v_beta + sqrt_3_alpha) / 2.0;
-    let z = (v_beta - sqrt_3_alpha) / 2.0;
+    let sqrt_3_alpha = SQRT3 * v_alpha_norm;
+    let x = v_beta_norm;
+    let y = (v_beta_norm + sqrt_3_alpha) / 2.0;
+    let z = (v_beta_norm - sqrt_3_alpha) / 2.0;
 
     // Determine sector (1-6) based on signs of x, y, z
     // This is much faster than calculating angles with atan2
@@ -64,12 +75,9 @@ pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, _v_dc: f32, max_duty: u16) -> 
 
     // Convert from range [-1, 1] to [0, max_duty]
     // Formula: duty = (value + 1.0) / 2.0 * max_duty
-    let duty_u = roundf((ta + 1.0) / 2.0 * max_duty as f32)
-        .clamp(0.0, max_duty as f32) as u16;
-    let duty_v = roundf((tb + 1.0) / 2.0 * max_duty as f32)
-        .clamp(0.0, max_duty as f32) as u16;
-    let duty_w = roundf((tc + 1.0) / 2.0 * max_duty as f32)
-        .clamp(0.0, max_duty as f32) as u16;
+    let duty_u = roundf((ta + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
+    let duty_v = roundf((tb + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
+    let duty_w = roundf((tc + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
 
     (duty_u, duty_v, duty_w)
 }

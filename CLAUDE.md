@@ -275,8 +275,8 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 ### FOCモジュール（[firmware/src/foc.rs](firmware/src/foc.rs)）
 
 #### HallSensor ([firmware/src/foc/hall_sensor.rs](firmware/src/foc/hall_sensor.rs))
-- Hall状態（1-6）から電気角推定（セクター中心：30, 90, 150, 210, 270, 330度）
-  - **重要**: セクターの中心角を使用することでFOC制御の精度向上
+- Hall状態（1-6）から電気角推定（セクター開始角度：0, 60, 120, 180, 240, 300度）
+  - **foc-simple互換**: セクターの開始角度を使用（各セクターは60度幅）
 - **角度補間機能**（デフォルト有効）：
   - Hall エッジ間で速度ベースの角度補間を実施
   - 離散的な60度ステップから連続的な角度推定へ改善

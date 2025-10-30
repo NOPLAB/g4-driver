@@ -2,27 +2,33 @@
 //!
 //! モーター制御コマンドの受信とステータス送信を行います。
 
-use embassy_stm32::{can, crc::Crc, flash::Flash};
+use embassy_stm32::{
+    can,
+    crc::Crc,
+    flash::{Blocking, Flash},
+};
 use embassy_time::{Duration, Ticker};
 use embedded_can::{Id, StandardId};
 
 use crate::can_protocol::{
-    can_ids, encode_config_status, encode_status, encode_voltage_status, parse_enable_command,
-    parse_pi_gains, parse_speed_command,
+    can_ids, encode_calibration_status, encode_config_status, encode_status, encode_voltage_status,
+    parse_angle_interpolation, parse_can_config, parse_control_timing, parse_enable_command,
+    parse_hall_sensor_params, parse_motor_basic_params, parse_motor_voltage_params,
+    parse_openloop_accel_duty_params, parse_openloop_rpm_params, parse_pi_gains, parse_pwm_config,
+    parse_speed_command,
 };
-use crate::config_storage::StoredConfig;
-use crate::eeprom;
+use crate::config;
 use crate::fmt::*;
 use crate::state::{
-    CONFIG_CRC_VALID, CONFIG_VERSION, MOTOR_ENABLE, MOTOR_STATUS, RUNTIME_CONFIG, SPEED_PI_GAINS,
-    TARGET_SPEED, VOLTAGE_STATE,
+    CALIBRATION_REQUEST, CALIBRATION_RESULT, CONFIG_CRC_VALID, CONFIG_VERSION, MOTOR_ENABLE,
+    MOTOR_STATUS, RUNTIME_CONFIG, SPEED_PI_GAINS, TARGET_SPEED, VOLTAGE_STATE,
 };
 
 /// CAN通信タスク - モーター制御コマンド処理とステータス送信
 #[embassy_executor::task]
 pub async fn can_task(
     can: can::Can<'static>,
-    mut flash: Flash<'static>,
+    mut flash: Flash<'static, Blocking>,
     mut crc: Crc<'static>,
 ) {
     let (mut tx, mut rx, _properties) = can.split();
@@ -70,14 +76,26 @@ pub async fn can_task(
                                     }
                                 }
                             }
+                            can_ids::START_CALIBRATION => {
+                                info!("Start calibration command received");
+                                // キャリブレーションリクエストフラグを設定
+                                *CALIBRATION_REQUEST.lock().await = true;
+                                info!("Calibration request flag set");
+                            }
                             can_ids::SAVE_CONFIG => {
                                 info!("Save config command received");
 
                                 // 現在の設定を取得
                                 let mut config = RUNTIME_CONFIG.lock().await.clone();
 
+                                // キャリブレーション結果を設定に反映
+                                let calib_result = *CALIBRATION_RESULT.lock().await;
+                                config.calibration_electrical_offset = calib_result.electrical_offset;
+                                config.calibration_direction_inversed = calib_result.direction_inversed;
+                                config.calibration_success = calib_result.success;
+
                                 // フラッシュに保存
-                                match eeprom::write_config(&mut flash, &mut crc, &mut config).await {
+                                match config::write_config(&mut flash, &mut crc, &mut config).await {
                                     Ok(_) => {
                                         info!("Config saved successfully");
                                         *CONFIG_CRC_VALID.lock().await = true;
@@ -92,7 +110,7 @@ pub async fn can_task(
                                 info!("Reload config command received");
 
                                 // フラッシュから設定を読み込み
-                                match eeprom::read_config(&mut flash, &mut crc) {
+                                match config::read_config(&mut flash, &mut crc) {
                                     Ok(loaded_config) => {
                                         info!("Config reloaded successfully");
 
@@ -117,7 +135,7 @@ pub async fn can_task(
                                 info!("Reset config command received");
 
                                 // デフォルト設定を作成
-                                match eeprom::initialize_default_config(&mut flash, &mut crc).await {
+                                match config::initialize_default_config(&mut flash, &mut crc).await {
                                     Ok(default_config) => {
                                         info!("Config reset to defaults successfully");
 
@@ -138,6 +156,81 @@ pub async fn can_task(
                                     }
                                 }
                             }
+                            // === Motor Control Parameter Commands ===
+                            can_ids::MOTOR_VOLTAGE_PARAMS => {
+                                if let Some((max_voltage, v_dc_bus)) = parse_motor_voltage_params(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.max_voltage = max_voltage;
+                                    config.v_dc_bus = v_dc_bus;
+                                    info!("Updated motor voltage params: max={}, vdc={}", max_voltage, v_dc_bus);
+                                }
+                            }
+                            can_ids::MOTOR_BASIC_PARAMS => {
+                                if let Some((pole_pairs, max_duty)) = parse_motor_basic_params(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.pole_pairs = pole_pairs;
+                                    config.max_duty = max_duty;
+                                    info!("Updated motor basic params: pole_pairs={}, max_duty={}", pole_pairs, max_duty);
+                                }
+                            }
+                            can_ids::HALL_SENSOR_PARAMS => {
+                                if let Some((alpha, offset)) = parse_hall_sensor_params(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.speed_filter_alpha = alpha;
+                                    config.hall_angle_offset = offset;
+                                    info!("Updated hall sensor params: alpha={}, offset={}", alpha, offset);
+                                }
+                            }
+                            can_ids::ANGLE_INTERPOLATION => {
+                                if let Some(enable) = parse_angle_interpolation(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.enable_angle_interpolation = enable;
+                                    info!("Updated angle interpolation: {}", enable);
+                                }
+                            }
+                            // === OpenLoop Parameter Commands ===
+                            can_ids::OPENLOOP_RPM_PARAMS => {
+                                if let Some((initial_rpm, target_rpm)) = parse_openloop_rpm_params(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.openloop_initial_rpm = initial_rpm;
+                                    config.openloop_target_rpm = target_rpm;
+                                    info!("Updated openloop RPM params: initial={}, target={}", initial_rpm, target_rpm);
+                                }
+                            }
+                            can_ids::OPENLOOP_ACCEL_DUTY_PARAMS => {
+                                if let Some((acceleration, duty_ratio)) = parse_openloop_accel_duty_params(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.openloop_acceleration = acceleration;
+                                    config.openloop_duty_ratio = duty_ratio;
+                                    info!("Updated openloop accel/duty: accel={}, duty={}", acceleration, duty_ratio);
+                                }
+                            }
+                            // === PWM/CAN/Timing Configuration ===
+                            can_ids::PWM_CONFIG => {
+                                if let Some((frequency, dead_time)) = parse_pwm_config(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.pwm_frequency = frequency;
+                                    config.pwm_dead_time = dead_time;
+                                    info!("Updated PWM config: freq={}Hz, dead_time={}", frequency, dead_time);
+                                    info!("⚠ PWM changes require reboot to take effect. Save config and restart.");
+                                }
+                            }
+                            can_ids::CAN_CONFIG => {
+                                if let Some(bitrate) = parse_can_config(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.can_bitrate = bitrate;
+                                    info!("Updated CAN config: bitrate={}", bitrate);
+                                    info!("⚠ CAN bitrate changes require reboot to take effect. Save config and restart.");
+                                }
+                            }
+                            can_ids::CONTROL_TIMING => {
+                                if let Some(period_us) = parse_control_timing(data) {
+                                    let mut config = RUNTIME_CONFIG.lock().await;
+                                    config.control_period_us = period_us;
+                                    info!("Updated control timing: {}us", period_us);
+                                    info!("⚠ Control period changes require reboot to take effect. Save config and restart.");
+                                }
+                            }
                             can_ids::EMERGENCY_STOP => {
                                 info!("Emergency stop received!");
                                 *MOTOR_ENABLE.lock().await = false;
@@ -149,7 +242,7 @@ pub async fn can_task(
                         }
                     }
                     Err(e) => {
-                        error!("CAN RX Error: {:?}", e);
+                        // error!("CAN RX Error: {:?}", e);
                     }
                 }
             },
@@ -191,6 +284,21 @@ pub async fn can_task(
                 if let Some(std_id) = StandardId::new(can_ids::CONFIG_STATUS as u16) {
                     let id = Id::Standard(std_id);
                     if let Ok(frame) = can::frame::Frame::new_data(id, &config_data) {
+                        let _ = tx.write(&frame).await;
+                    }
+                }
+
+                // キャリブレーションステータス送信 (ID 0x203)
+                let calib_result = *CALIBRATION_RESULT.lock().await;
+                let calib_data = encode_calibration_status(
+                    calib_result.electrical_offset,
+                    calib_result.direction_inversed,
+                    calib_result.success,
+                );
+
+                if let Some(std_id) = StandardId::new(can_ids::CALIBRATION_STATUS as u16) {
+                    let id = Id::Standard(std_id);
+                    if let Ok(frame) = can::frame::Frame::new_data(id, &calib_data) {
                         let _ = tx.write(&frame).await;
                     }
                 }
