@@ -9,10 +9,9 @@ pub mod svpwm;
 pub mod transforms;
 
 // Re-export main types for easier access
-pub use calibration::{CalibrationResult, CalibrationState, MotorCalibration};
+pub use calibration::{CalibrationResult, MotorCalibration};
 pub use hall_sensor::HallSensor;
 pub use pi_controller::PiController;
-pub use shaft_position::ShaftPosition;
 pub use svpwm::calculate_svpwm;
 pub use transforms::{inverse_park, limit_voltage};
 
@@ -227,6 +226,7 @@ impl OpenLoopSixStep {
     }
 
     /// 現在のステップを取得
+    #[allow(dead_code)]
     pub fn get_current_step(&self) -> u8 {
         self.current_step
     }

@@ -5,7 +5,6 @@ mod ui;
 use dioxus::desktop::{Config, WindowBuilder};
 use dioxus::prelude::*;
 use state::AppState;
-use tracing_subscriber;
 
 fn main() {
     // Initialize tracing

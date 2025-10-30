@@ -6,7 +6,7 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 
 use crate::can_protocol::MotorStatus;
-use crate::config::{DEFAULT_SPEED_KI, DEFAULT_SPEED_KP, StoredConfig};
+use crate::config::{StoredConfig, DEFAULT_SPEED_KI, DEFAULT_SPEED_KP};
 use crate::foc::{CalibrationResult, ControlMode};
 use crate::voltage_monitor::VoltageMonitorState;
 

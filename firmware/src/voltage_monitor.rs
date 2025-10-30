@@ -28,8 +28,8 @@ impl Default for VoltageMonitorConfig {
             // 分圧回路: 33.3kΩ + 3.3kΩ（抵抗比 10.09:1、電圧変換係数 11.09倍）
             // V_bus = V_adc * (33.3k + 3.3k) / 3.3k = V_adc * 11.09
             // 最大入力電圧: 3.3V * 11.09 ≈ 36.6V
-            r_upper: 33_300.0,  // 上側抵抗 33.3kΩ
-            r_lower: 3_300.0,   // 下側抵抗 3.3kΩ
+            r_upper: 33_300.0, // 上側抵抗 33.3kΩ
+            r_lower: 3_300.0,  // 下側抵抗 3.3kΩ
             adc_max: 4096,
             vref: 3.3,
             filter_alpha: 0.1,            // 緩やかなフィルタ

@@ -59,7 +59,6 @@ pub fn F32InputInline(
     }
 }
 
-
 /// F32 number input component with step support
 #[component]
 pub fn F32Input(

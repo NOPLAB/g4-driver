@@ -127,9 +127,7 @@ async fn main(spawner: Spawner) {
     }
 
     // CAN task用にFlash/CRCをAsync版で再初期化
-    // Peripheralsを再取得（flash_blockingとcrc_blockingはdrop）
-    drop(flash_blocking);
-    drop(crc_blocking);
+    // Peripheralsを再取得（flash_blockingとcrc_blockingは自動的にdrop）
 
     let p2 = unsafe { embassy_stm32::Peripherals::steal() };
     let flash = Flash::new_blocking(p2.FLASH); // new_blockingしか使えない

@@ -150,6 +150,7 @@ impl Default for CalibrationStatus {
 /// # Returns
 /// * `Some(speed_rpm)` if parsing successful
 /// * `None` if data length is incorrect
+#[allow(dead_code)]
 pub fn parse_speed_command(data: &[u8]) -> Option<f32> {
     if data.len() < 4 {
         error!("Speed command: invalid data length {}", data.len());
@@ -183,6 +184,7 @@ pub fn encode_speed_command(speed_rpm: f32) -> [u8; 4] {
 /// # Returns
 /// * `Some((kp, ki))` if parsing successful
 /// * `None` if data length is incorrect
+#[allow(dead_code)]
 pub fn parse_pi_gains(data: &[u8]) -> Option<(f32, f32)> {
     if data.len() < 8 {
         error!("PI gains: invalid data length {}", data.len());
@@ -224,6 +226,7 @@ pub fn encode_pi_gains(kp: f32, ki: f32) -> [u8; 8] {
 /// * `Some(true)` if enable command (data[0] != 0)
 /// * `Some(false)` if disable command (data[0] == 0)
 /// * `None` if data length is incorrect
+#[allow(dead_code)]
 pub fn parse_enable_command(data: &[u8]) -> Option<bool> {
     if data.is_empty() {
         error!("Enable command: no data");
@@ -254,6 +257,7 @@ pub fn encode_enable_command(enable: bool) -> [u8; 1] {
 ///
 /// # Returns
 /// 8-byte array containing encoded status
+#[allow(dead_code)]
 pub fn encode_status(speed_rpm: f32, electrical_angle: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
 
@@ -302,6 +306,7 @@ pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
 ///
 /// # Returns
 /// 5-byte array containing encoded voltage status
+#[allow(dead_code)]
 pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool) -> [u8; 5] {
     let mut data = [0u8; 5];
 

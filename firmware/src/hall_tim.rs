@@ -129,7 +129,7 @@ pub unsafe fn init_hall_timer() {
     tim4.ccer().modify(|w| {
         w.set_cce(0, true); // CC1E: Capture enabled
         w.set_ccp(0, false); // CC1P: 0 = RISING (立ち上がりエッジのみ)
-        // CC1NP はデフォルト false のまま
+                             // CC1NP はデフォルト false のまま
     });
 
     // 7. 割り込み設定

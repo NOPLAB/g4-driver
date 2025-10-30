@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 use tracing::{error, info};
 
+use super::components::{Button, ButtonVariant, ErrorBanner, StatusColor, StatusIndicator};
 use crate::can::{self, CanManager};
 use crate::state::{AppState, ConnectionState};
-use super::components::{Button, ButtonVariant, ErrorBanner, StatusColor, StatusIndicator};
 
 #[component]
 pub fn ConnectionBar() -> Element {

@@ -53,6 +53,7 @@ impl ShaftPosition {
     }
 
     /// 方向反転フラグを取得
+    #[allow(dead_code)]
     pub fn is_inversed(&self) -> bool {
         self.inversed
     }
@@ -128,6 +129,7 @@ impl ShaftPosition {
     ///
     /// # 戻り値
     /// 角度変化量 [rad]
+    #[allow(dead_code)]
     pub fn delta(&self) -> f32 {
         // 前回の位置を計算
         let prev_position = self.rotations as f32 * TAU + self.prev_angle;
@@ -142,6 +144,7 @@ impl ShaftPosition {
     ///
     /// # 戻り値
     /// 位置差 [rad]（self - other）
+    #[allow(dead_code)]
     pub fn compare(&self, other: &ShaftPosition) -> f32 {
         self.get_position() - other.get_position()
     }
@@ -153,6 +156,7 @@ impl ShaftPosition {
     ///
     /// # 戻り値
     /// 角度差 [rad]（-π ≤ diff ≤ +π）
+    #[allow(dead_code)]
     pub fn angular_distance(&self, other: &ShaftPosition) -> f32 {
         let diff = self.angle - other.angle;
 

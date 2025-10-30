@@ -20,10 +20,7 @@ impl StatusColor {
 }
 
 #[component]
-pub fn StatusIndicator(
-    text: String,
-    color: StatusColor,
-) -> Element {
+pub fn StatusIndicator(text: String, color: StatusColor) -> Element {
     let color_hex = color.get_hex();
 
     rsx! {

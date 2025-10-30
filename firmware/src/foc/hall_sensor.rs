@@ -108,7 +108,10 @@ impl HallSensor {
                 // Log error only once every 2500 calls (1 second at 2.5kHz)
                 if ERROR_LOG_COUNTER >= 2500 {
                     ERROR_LOG_COUNTER = 0;
-                    error!("Invalid hall state: {} (repeated, throttling log)", raw_hall_state);
+                    error!(
+                        "Invalid hall state: {} (repeated, throttling log)",
+                        raw_hall_state
+                    );
                 }
             }
 
@@ -121,7 +124,8 @@ impl HallSensor {
             }
 
             // Calculate electrical angle from mechanical angle
-            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            let electrical_angle =
+                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
             return (electrical_angle, self.speed_rpm);
         }
 
@@ -129,7 +133,8 @@ impl HallSensor {
         let normalized_state = HALL_STATE_TABLE[raw_hall_state as usize];
         if normalized_state == 255 {
             // Invalid state (should not happen after is_valid_state check, but safety check)
-            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            let electrical_angle =
+                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
             return (electrical_angle, self.speed_rpm);
         }
 
@@ -151,7 +156,8 @@ impl HallSensor {
             }
 
             // Calculate electrical angle: mechanical_angle * pole_pairs - offset
-            let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            let electrical_angle =
+                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
 
             return (electrical_angle, self.speed_rpm);
         }
@@ -236,7 +242,8 @@ impl HallSensor {
         }
 
         // Calculate electrical angle: mechanical_angle * pole_pairs - offset (foc-simple formula)
-        let electrical_angle = self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+        let electrical_angle =
+            self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
 
         (electrical_angle, self.speed_rpm)
     }
@@ -339,12 +346,12 @@ mod tests {
     fn test_hall_state_table() {
         // Test state mapping (foc-simple compatible)
         assert_eq!(HALL_STATE_TABLE[0], 255); // Invalid
-        assert_eq!(HALL_STATE_TABLE[1], 0);   // State 1 -> index 0
-        assert_eq!(HALL_STATE_TABLE[2], 2);   // State 2 -> index 2
-        assert_eq!(HALL_STATE_TABLE[3], 1);   // State 3 -> index 1
-        assert_eq!(HALL_STATE_TABLE[4], 4);   // State 4 -> index 4
-        assert_eq!(HALL_STATE_TABLE[5], 5);   // State 5 -> index 5
-        assert_eq!(HALL_STATE_TABLE[6], 3);   // State 6 -> index 3
+        assert_eq!(HALL_STATE_TABLE[1], 0); // State 1 -> index 0
+        assert_eq!(HALL_STATE_TABLE[2], 2); // State 2 -> index 2
+        assert_eq!(HALL_STATE_TABLE[3], 1); // State 3 -> index 1
+        assert_eq!(HALL_STATE_TABLE[4], 4); // State 4 -> index 4
+        assert_eq!(HALL_STATE_TABLE[5], 5); // State 5 -> index 5
+        assert_eq!(HALL_STATE_TABLE[6], 3); // State 6 -> index 3
         assert_eq!(HALL_STATE_TABLE[7], 255); // Invalid
     }
 

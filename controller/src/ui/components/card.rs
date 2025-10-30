@@ -1,10 +1,7 @@
 use dioxus::prelude::*;
 
 #[component]
-pub fn Card(
-    #[props(default = "".to_string())] custom_style: String,
-    children: Element,
-) -> Element {
+pub fn Card(#[props(default = "".to_string())] custom_style: String, children: Element) -> Element {
     let base_style = "padding: 20px; background: white; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);";
     let final_style = if custom_style.is_empty() {
         base_style.to_string()

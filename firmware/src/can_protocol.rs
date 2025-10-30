@@ -97,6 +97,7 @@ impl Default for MotorStatus {
 
 /// Voltage status structure
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct VoltageStatus {
     pub voltage: f32,
     pub overvoltage: bool,
@@ -367,6 +368,7 @@ pub fn parse_motor_voltage_params(data: &[u8]) -> Option<(f32, f32)> {
 }
 
 /// Encode motor voltage parameters into CAN data
+#[allow(dead_code)]
 pub fn encode_motor_voltage_params(max_voltage: f32, v_dc_bus: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
     data[0..4].copy_from_slice(&max_voltage.to_le_bytes());
@@ -400,6 +402,7 @@ pub fn parse_motor_basic_params(data: &[u8]) -> Option<(u8, u16)> {
 }
 
 /// Encode motor basic parameters into CAN data
+#[allow(dead_code)]
 pub fn encode_motor_basic_params(pole_pairs: u8, max_duty: u16) -> [u8; 3] {
     let mut data = [0u8; 3];
     data[0] = pole_pairs;
@@ -435,6 +438,7 @@ pub fn parse_hall_sensor_params(data: &[u8]) -> Option<(f32, f32)> {
 }
 
 /// Encode hall sensor parameters into CAN data
+#[allow(dead_code)]
 pub fn encode_hall_sensor_params(speed_filter_alpha: f32, hall_angle_offset: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
     data[0..4].copy_from_slice(&speed_filter_alpha.to_le_bytes());
@@ -462,6 +466,7 @@ pub fn parse_angle_interpolation(data: &[u8]) -> Option<bool> {
 }
 
 /// Encode angle interpolation setting into CAN data
+#[allow(dead_code)]
 pub fn encode_angle_interpolation(enable: bool) -> [u8; 1] {
     [if enable { 1 } else { 0 }]
 }
@@ -498,6 +503,7 @@ pub fn parse_openloop_rpm_params(data: &[u8]) -> Option<(f32, f32)> {
 }
 
 /// Encode openloop RPM parameters into CAN data
+#[allow(dead_code)]
 pub fn encode_openloop_rpm_params(initial_rpm: f32, target_rpm: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
     data[0..4].copy_from_slice(&initial_rpm.to_le_bytes());
@@ -536,6 +542,7 @@ pub fn parse_openloop_accel_duty_params(data: &[u8]) -> Option<(f32, u16)> {
 }
 
 /// Encode openloop acceleration/duty parameters into CAN data
+#[allow(dead_code)]
 pub fn encode_openloop_accel_duty_params(acceleration: f32, duty_ratio: u16) -> [u8; 6] {
     let mut data = [0u8; 6];
     data[0..4].copy_from_slice(&acceleration.to_le_bytes());
@@ -575,6 +582,7 @@ pub fn parse_pwm_config(data: &[u8]) -> Option<(u32, u16)> {
 }
 
 /// Encode PWM configuration into CAN data
+#[allow(dead_code)]
 pub fn encode_pwm_config(frequency: u32, dead_time: u16) -> [u8; 6] {
     let mut data = [0u8; 6];
     data[0..4].copy_from_slice(&frequency.to_le_bytes());
@@ -608,6 +616,7 @@ pub fn parse_can_config(data: &[u8]) -> Option<u32> {
 }
 
 /// Encode CAN configuration into CAN data
+#[allow(dead_code)]
 pub fn encode_can_config(bitrate: u32) -> [u8; 4] {
     bitrate.to_le_bytes()
 }
@@ -640,6 +649,7 @@ pub fn parse_control_timing(data: &[u8]) -> Option<u64> {
 }
 
 /// Encode control timing into CAN data
+#[allow(dead_code)]
 pub fn encode_control_timing(control_period_us: u64) -> [u8; 8] {
     control_period_us.to_le_bytes()
 }

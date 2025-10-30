@@ -9,7 +9,7 @@ mod toggle;
 pub use banner::{Banner, BannerType, ErrorBanner, WarningBanner};
 pub use button::{Button, ButtonVariant, EmergencyStopButton};
 pub use card::{Card, StatusCard, StatusCardColor};
-pub use number_input::{F32Input, F32InputInline, U8Input, U16Input, U32Input, U64Input};
+pub use number_input::{F32Input, F32InputInline, U16Input, U32Input, U64Input, U8Input};
 pub use section_header::{HeaderColor, SectionHeader};
 pub use status_indicator::{StatusColor, StatusIndicator};
 pub use toggle::ToggleSwitch;

@@ -96,6 +96,7 @@ impl MotorCalibration {
     }
 
     /// 現在の状態を取得
+    #[allow(dead_code)]
     pub fn get_state(&self) -> CalibrationState {
         self.state
     }
@@ -136,8 +137,7 @@ impl MotorCalibration {
                 // 目標: 1回転以上（1電気角回転）
                 if self.shaft_position_req.rotations >= 1 {
                     // モーターが動いたかチェック
-                    if self.shaft_position_act.rotations == 0
-                        && self.shaft_position_act.angle < 0.1
+                    if self.shaft_position_act.rotations == 0 && self.shaft_position_act.angle < 0.1
                     {
                         error!("Calibration failed: Motor did not move");
                         self.state = CalibrationState::Completed;
@@ -167,8 +167,7 @@ impl MotorCalibration {
                 }
 
                 // 要求位置の電気角を返す（オフセット未適用）
-                let electrical_angle =
-                    self.shaft_position_req.get_angle() * self.pole_pairs as f32;
+                let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
                 Ok((electrical_angle, self.torque))
             }
 
@@ -197,8 +196,7 @@ impl MotorCalibration {
                     self.shaft_position_req.increment(0.004);
                 }
 
-                let electrical_angle =
-                    self.shaft_position_req.get_angle() * self.pole_pairs as f32;
+                let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
                 Ok((electrical_angle, self.torque))
             }
 
@@ -213,10 +211,7 @@ impl MotorCalibration {
                         self.result.electrical_offset,
                         self.result.electrical_offset * 180.0 / core::f32::consts::PI
                     );
-                    info!(
-                        "  Direction inversed: {}",
-                        self.result.direction_inversed
-                    );
+                    info!("  Direction inversed: {}", self.result.direction_inversed);
 
                     self.state = CalibrationState::Completed;
                     self.result.success = true;
@@ -239,6 +234,7 @@ impl MotorCalibration {
     }
 
     /// トルクを設定
+    #[allow(dead_code)]
     pub fn set_torque(&mut self, torque: f32) {
         self.torque = torque.clamp(0.1, 0.5);
     }

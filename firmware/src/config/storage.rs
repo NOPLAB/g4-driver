@@ -123,7 +123,7 @@ impl StoredConfig {
             max_duty: params::DEFAULT_MAX_DUTY,
             speed_filter_alpha: params::DEFAULT_SPEED_FILTER_ALPHA,
             hall_angle_offset: params::DEFAULT_HALL_ANGLE_OFFSET_DEG, // デフォルトはオフセットなし
-            enable_angle_interpolation: true,                          // デフォルトで有効
+            enable_angle_interpolation: true,                         // デフォルトで有効
             _padding2: [0; 2],
             calibration_electrical_offset: 0.0, // キャリブレーション未実施
             calibration_direction_inversed: false,
@@ -187,12 +187,12 @@ impl StoredConfig {
 
         // 4バイト境界に合わせてデータを準備
         let mut aligned_data = [0u32; 64]; // 最大256バイト分
-        let word_count = (data.len() + 3) / 4;
+        let word_count = data.len().div_ceil(4);
 
-        for i in 0..word_count {
+        for (i, aligned_word) in aligned_data.iter_mut().enumerate().take(word_count) {
             let offset = i * 4;
             if offset + 4 <= data.len() {
-                aligned_data[i] = u32::from_le_bytes([
+                *aligned_word = u32::from_le_bytes([
                     data[offset],
                     data[offset + 1],
                     data[offset + 2],
@@ -201,10 +201,9 @@ impl StoredConfig {
             } else {
                 // 最後の不完全なワード
                 let mut bytes = [0u8; 4];
-                for j in 0..(data.len() - offset) {
-                    bytes[j] = data[offset + j];
-                }
-                aligned_data[i] = u32::from_le_bytes(bytes);
+                let remaining = data.len() - offset;
+                bytes[..remaining].copy_from_slice(&data[offset..offset + remaining]);
+                *aligned_word = u32::from_le_bytes(bytes);
             }
         }
 

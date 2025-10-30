@@ -48,11 +48,13 @@ impl CanManager {
     }
 
     /// Check if connected
+    #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
         self.socket.lock().await.is_some()
     }
 
     /// Get current interface name
+    #[allow(dead_code)]
     pub fn interface_name(&self) -> &str {
         &self.interface_name
     }

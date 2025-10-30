@@ -28,6 +28,7 @@ pub const LAST_PAGE_OFFSET: u32 = LAST_PAGE_START - FLASH_BASE; // 0x1F800
 /// EEPROM操作のエラー型
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "debug", derive(defmt::Format))]
+#[allow(dead_code)]
 pub enum EepromError {
     /// フラッシュ書き込みエラー
     FlashWriteError,
@@ -120,7 +121,10 @@ pub async fn write_config(
     info!("Calculated CRC32: 0x{:08X}", config.crc32);
 
     // 最終ページを消去（embassy-stm32のFlash APIはオフセットを使用）
-    info!("Erasing flash page {} at offset 0x{:08X}", LAST_PAGE_NUMBER, LAST_PAGE_OFFSET);
+    info!(
+        "Erasing flash page {} at offset 0x{:08X}",
+        LAST_PAGE_NUMBER, LAST_PAGE_OFFSET
+    );
     flash
         .blocking_erase(LAST_PAGE_OFFSET, LAST_PAGE_OFFSET + FLASH_PAGE_SIZE as u32)
         .map_err(|e| {
@@ -132,7 +136,11 @@ pub async fn write_config(
     let data = config.as_bytes_mut();
 
     // フラッシュに書き込み（embassy-stm32のFlash APIはオフセットを使用）
-    info!("Writing {} bytes to flash at offset 0x{:08X}", data.len(), LAST_PAGE_OFFSET);
+    info!(
+        "Writing {} bytes to flash at offset 0x{:08X}",
+        data.len(),
+        LAST_PAGE_OFFSET
+    );
     flash.blocking_write(LAST_PAGE_OFFSET, data).map_err(|e| {
         error!("Flash write failed: {:?}", e);
         EepromError::FlashWriteError

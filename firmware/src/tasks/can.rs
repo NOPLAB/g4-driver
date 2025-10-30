@@ -86,7 +86,7 @@ pub async fn can_task(
                                 info!("Save config command received");
 
                                 // 現在の設定を取得
-                                let mut config = RUNTIME_CONFIG.lock().await.clone();
+                                let mut config = *RUNTIME_CONFIG.lock().await;
 
                                 // キャリブレーション結果を設定に反映
                                 let calib_result = *CALIBRATION_RESULT.lock().await;
@@ -241,8 +241,8 @@ pub async fn can_task(
                             }
                         }
                     }
-                    Err(e) => {
-                        // error!("CAN RX Error: {:?}", e);
+                    Err(_e) => {
+                        // error!("CAN RX Error: {:?}", _e);
                     }
                 }
             },

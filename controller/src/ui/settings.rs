@@ -1,12 +1,12 @@
 use dioxus::prelude::*;
 use tracing::{error, info};
 
-use crate::state::{AppState, ConnectionState};
 use super::components::{
     Banner, BannerType, Button, ButtonVariant, Card, ErrorBanner, F32Input, HeaderColor,
     SectionHeader, StatusCard, StatusCardColor, U16Input, U32Input, U64Input, U8Input,
     WarningBanner,
 };
+use crate::state::{AppState, ConnectionState};
 
 // Default values (from firmware config)
 const DEFAULT_KP: f32 = 0.5;
@@ -638,7 +638,7 @@ fn ConfigManagementSection(is_connected: bool) -> Element {
 
 #[component]
 fn CalibrationTab(is_connected: bool) -> Element {
-    let mut app_state = use_context::<Signal<AppState>>();
+    let app_state = use_context::<Signal<AppState>>();
     let state = app_state.read();
 
     // Calibration torque value (0-100)
@@ -652,7 +652,12 @@ fn CalibrationTab(is_connected: bool) -> Element {
 
         spawn(async move {
             let manager = app_state.read().can_manager.clone();
-            match manager.lock().await.send_start_calibration(Some(torque)).await {
+            match manager
+                .lock()
+                .await
+                .send_start_calibration(Some(torque))
+                .await
+            {
                 Ok(_) => info!("Calibration command sent successfully"),
                 Err(e) => error!("Failed to send calibration command: {}", e),
             };
@@ -726,7 +731,7 @@ fn CalibrationTab(is_connected: bool) -> Element {
                         div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;",
                             StatusCard {
                                 label: "Electrical Offset".to_string(),
-                                value: format!("{:.4} rad ({:.1}°)", cal_status.electrical_offset, cal_status.electrical_offset * 180.0 / 3.14159),
+                                value: format!("{:.4} rad ({:.1}°)", cal_status.electrical_offset, cal_status.electrical_offset * 180.0 / std::f32::consts::PI),
                                 color: StatusCardColor::Blue
                             }
 
@@ -755,4 +760,3 @@ fn CalibrationTab(is_connected: bool) -> Element {
         }
     }
 }
-

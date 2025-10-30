@@ -15,6 +15,7 @@ pub struct UsbCanDevice {
 
 /// CAN interface information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CanInterface {
     pub name: String,
     pub is_up: bool,
@@ -280,6 +281,7 @@ pub fn cleanup_slcan_interface(interface_name: &str) -> Result<()> {
 }
 
 /// Check if an interface is up
+#[allow(dead_code)]
 pub fn is_interface_up(interface_name: &str) -> Result<bool> {
     let interfaces = detect_can_interfaces()?;
     Ok(interfaces

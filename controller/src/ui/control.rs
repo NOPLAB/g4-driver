@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 use tracing::{error, info};
 
-use crate::state::{AppState, ConnectionState};
 use super::components::{
-    Button, ButtonVariant, Card, EmergencyStopButton, F32InputInline, SectionHeader,
-    StatusCard, StatusCardColor, ToggleSwitch, WarningBanner,
+    Button, ButtonVariant, Card, EmergencyStopButton, F32InputInline, SectionHeader, StatusCard,
+    StatusCardColor, ToggleSwitch, WarningBanner,
 };
+use crate::state::{AppState, ConnectionState};
 
 #[component]
 pub fn ControlPanel() -> Element {
@@ -16,7 +16,7 @@ pub fn ControlPanel() -> Element {
 
     // Speed slider change handler
     let on_speed_slider_change = move |evt: Event<FormData>| {
-        if let Some(value) = evt.value().parse::<f32>().ok() {
+        if let Ok(value) = evt.value().parse::<f32>() {
             app_state.write().settings.target_speed = value;
         }
     };

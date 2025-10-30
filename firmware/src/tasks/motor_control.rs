@@ -10,9 +10,15 @@ use embassy_time::{Duration, Timer};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::{calculate_svpwm, inverse_park, limit_voltage, ControlMode, HallSensor, MotorCalibration, OpenLoopSixStep, PiController};
+use crate::foc::{
+    calculate_svpwm, inverse_park, limit_voltage, ControlMode, HallSensor, MotorCalibration,
+    OpenLoopSixStep, PiController,
+};
 use crate::hall_tim;
-use crate::state::{CALIBRATION_REQUEST, CALIBRATION_RESULT, CONTROL_MODE, MOTOR_ENABLE, MOTOR_STATUS, SPEED_PI_GAINS, TARGET_SPEED};
+use crate::state::{
+    CALIBRATION_REQUEST, CALIBRATION_RESULT, CONTROL_MODE, MOTOR_ENABLE, MOTOR_STATUS,
+    SPEED_PI_GAINS, TARGET_SPEED,
+};
 use core::f32::consts::PI;
 
 /// モーター制御タスク（2.5kHz FOC制御ループ）
@@ -29,7 +35,8 @@ pub async fn motor_control_task(mut uvw_pwm: ComplementaryPwm<'static, periphera
     hall_sensor.set_electrical_offset(offset_rad);
 
     // 速度PIコントローラ初期化
-    let mut speed_pi = PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, DEFAULT_MAX_VOLTAGE);
+    let mut speed_pi =
+        PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, DEFAULT_MAX_VOLTAGE);
 
     // オープンループ始動コントローラ初期化
     let mut openloop = OpenLoopSixStep::new(
@@ -268,7 +275,8 @@ pub async fn motor_control_task(mut uvw_pwm: ComplementaryPwm<'static, periphera
                 let (v_alpha, v_beta) = inverse_park(vd_limited, vq_limited, hall_electrical_angle);
 
                 // SVPWM計算
-                let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, DEFAULT_MAX_DUTY);
+                let (duty_u, duty_v, duty_w) =
+                    calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, DEFAULT_MAX_DUTY);
 
                 // デバッグ用：FOC制御の詳細ログ（10Hz = 250回に1回）
                 static mut FOC_LOG_COUNTER: u32 = 0;

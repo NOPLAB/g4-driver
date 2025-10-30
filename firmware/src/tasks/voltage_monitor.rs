@@ -32,7 +32,7 @@ pub async fn voltage_monitor_task(
 
     // 初回ADC読み取りでフィルタを初期化（起動時のUNDERVOLTAGE誤検出を防ぐ）
     let initial_adc = adc.blocking_read(&mut voltage_pin);
-    monitor.initialize_with_adc(initial_adc);  // フィルタを実電圧で初期化
+    monitor.initialize_with_adc(initial_adc); // フィルタを実電圧で初期化
     let state = monitor.get_state();
     info!(
         "Initial voltage: {}V (ADC raw: {}), OV={}, UV={}",
@@ -53,7 +53,7 @@ pub async fn voltage_monitor_task(
 
         // デバッグ: ADC生値とADC電圧を計算（33.3kΩ + 3.3kΩ分圧）
         let v_adc = (adc_raw as f32 / 4096.0) * 3.3;
-        let divider_ratio = (33_300.0 + 3_300.0) / 3_300.0;  // = 11.09倍
+        let divider_ratio = (33_300.0 + 3_300.0) / 3_300.0; // = 11.09倍
         let v_bus_calc = v_adc * divider_ratio;
 
         // 電圧監視更新
