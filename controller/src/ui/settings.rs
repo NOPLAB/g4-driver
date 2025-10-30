@@ -101,6 +101,16 @@ pub fn SettingsPanel() -> Element {
                     onclick: move |_| selected_tab.set(4),
                     "Advanced"
                 }
+
+                button {
+                    style: if selected_tab() == 5 {
+                        "padding: 12px 24px; border: none; background: #007bff; color: white; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500; border-bottom: 3px solid #007bff;"
+                    } else {
+                        "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
+                    },
+                    onclick: move |_| selected_tab.set(5),
+                    "Calibration"
+                }
             }
 
             // Tab content
@@ -110,6 +120,7 @@ pub fn SettingsPanel() -> Element {
                 2 => rsx! { HallSensorTab { is_connected } },
                 3 => rsx! { OpenLoopTab { is_connected } },
                 4 => rsx! { AdvancedTab { is_connected } },
+                5 => rsx! { CalibrationTab { is_connected } },
                 _ => rsx! { div { "Invalid tab" } },
             }
 
@@ -618,6 +629,126 @@ fn ConfigManagementSection(is_connected: bool) -> Element {
                         custom_style: "border: 1px solid #dc3545; background: white; color: #dc3545;".to_string(),
                         onclick: on_reset_config,
                         "⚠ Reset to Defaults"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CalibrationTab(is_connected: bool) -> Element {
+    let mut app_state = use_context::<Signal<AppState>>();
+    let state = app_state.read();
+
+    // Calibration torque value (0-100)
+    let mut calibration_torque = use_signal(|| 30u8);
+    let mut is_calibrating = use_signal(|| false);
+
+    let on_start_calibration = move |_| {
+        let torque = calibration_torque();
+        info!("Starting calibration with torque: {}", torque);
+        is_calibrating.set(true);
+
+        spawn(async move {
+            let manager = app_state.read().can_manager.clone();
+            match manager.lock().await.send_start_calibration(Some(torque)).await {
+                Ok(_) => info!("Calibration command sent successfully"),
+                Err(e) => error!("Failed to send calibration command: {}", e),
+            };
+
+            // Reset calibrating flag after a delay
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            is_calibrating.set(false);
+        });
+    };
+
+    rsx! {
+        Card {
+            SectionHeader { title: "Motor Calibration".to_string(), color: HeaderColor::Orange }
+
+            Banner {
+                banner_type: BannerType::Warning,
+                message: "⚠ WARNING: Ensure the motor can spin freely during calibration. Keep clear of moving parts!".to_string()
+            }
+
+            div { style: "display: flex; flex-direction: column; gap: 20px; margin-top: 20px;",
+                // Description
+                p { style: "color: #666; line-height: 1.6;",
+                    "Motor calibration determines the electrical angle offset and rotation direction. "
+                    "The motor will spin slowly during calibration to detect Hall sensor alignment."
+                }
+
+                // Calibration control
+                div { style: "display: flex; flex-direction: column; gap: 15px; padding: 20px; background: #f8f9fa; border-radius: 8px;",
+                    // Torque input
+                    U8Input {
+                        label: "Calibration Torque (0-100)".to_string(),
+                        value: calibration_torque(),
+                        on_change: move |v: u8| calibration_torque.set(v.min(100)),
+                        is_connected,
+                        description: "Torque level during calibration. Lower values for light motors, higher for heavy loads. Default: 30".to_string()
+                    }
+
+                    // Start calibration button
+                    Button {
+                        variant: if is_calibrating() { ButtonVariant::Secondary } else { ButtonVariant::Warning },
+                        disabled: !is_connected || is_calibrating(),
+                        custom_style: "width: 100%; padding: 12px;".to_string(),
+                        onclick: on_start_calibration,
+                        if is_calibrating() {
+                            "🔄 Calibrating... (please wait)"
+                        } else {
+                            "⚡ Start Calibration"
+                        }
+                    }
+                }
+
+                // Calibration status display
+                if let Some(cal_status) = state.calibration_status {
+                    div { style: "display: flex; flex-direction: column; gap: 15px;",
+                        SectionHeader {
+                            title: "Calibration Results".to_string(),
+                            color: if cal_status.success { HeaderColor::Green } else { HeaderColor::Red }
+                        }
+
+                        if cal_status.success {
+                            Banner {
+                                banner_type: BannerType::Success,
+                                message: "✓ Calibration completed successfully!".to_string()
+                            }
+                        } else {
+                            ErrorBanner {
+                                message: "✗ Calibration failed. Please try again.".to_string()
+                            }
+                        }
+
+                        div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;",
+                            StatusCard {
+                                label: "Electrical Offset".to_string(),
+                                value: format!("{:.4} rad ({:.1}°)", cal_status.electrical_offset, cal_status.electrical_offset * 180.0 / 3.14159),
+                                color: StatusCardColor::Blue
+                            }
+
+                            StatusCard {
+                                label: "Direction".to_string(),
+                                value: if cal_status.direction_inversed { "Inversed".to_string() } else { "Normal".to_string() },
+                                color: if cal_status.direction_inversed { StatusCardColor::Orange } else { StatusCardColor::Green }
+                            }
+
+                            StatusCard {
+                                label: "Status".to_string(),
+                                value: if cal_status.success { "✓ Success".to_string() } else { "✗ Failed".to_string() },
+                                color: if cal_status.success { StatusCardColor::Green } else { StatusCardColor::Red }
+                            }
+                        }
+
+                        if cal_status.success {
+                            Banner {
+                                banner_type: BannerType::Info,
+                                message: "Remember to save the configuration to flash memory to persist these calibration values!".to_string()
+                            }
+                        }
                     }
                 }
             }

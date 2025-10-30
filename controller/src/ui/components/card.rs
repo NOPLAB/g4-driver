@@ -25,6 +25,7 @@ pub enum StatusCardColor {
     Blue,
     Green,
     Yellow,
+    Orange,
     Red,
 }
 
@@ -34,6 +35,7 @@ impl StatusCardColor {
             StatusCardColor::Blue => "#007bff",
             StatusCardColor::Green => "#28a745",
             StatusCardColor::Yellow => "#ffc107",
+            StatusCardColor::Orange => "#fd7e14",
             StatusCardColor::Red => "#dc3545",
         }
     }

@@ -6,7 +6,7 @@ use tokio::time::{timeout, Duration};
 use tokio_socketcan::{CANFrame, CANSocket};
 use tracing::{debug, info};
 
-use super::protocol::{self, can_ids, MotorStatus, VoltageStatus};
+use super::protocol::{self, can_ids, CalibrationStatus, MotorStatus, VoltageStatus};
 
 /// CAN Manager for handling CAN communication
 pub struct CanManager {
@@ -217,6 +217,20 @@ impl CanManager {
         self.send_frame(can_ids::CONTROL_TIMING, &data).await
     }
 
+    // ========================================================================
+    // Calibration Commands
+    // ========================================================================
+
+    /// Send start calibration command
+    ///
+    /// # Arguments
+    /// * `torque` - Optional torque value (0-100). If None, uses default.
+    pub async fn send_start_calibration(&self, torque: Option<u8>) -> Result<()> {
+        info!("Sending start calibration command");
+        let data = protocol::encode_start_calibration(torque);
+        self.send_frame(can_ids::START_CALIBRATION, &data).await
+    }
+
     /// Receive next CAN frame with timeout
     ///
     /// # Arguments
@@ -266,6 +280,19 @@ impl CanManager {
     pub fn parse_config_status(frame: &CANFrame) -> Option<(u16, bool)> {
         if frame.id() == can_ids::CONFIG_STATUS {
             protocol::decode_config_status(frame.data())
+        } else {
+            None
+        }
+    }
+
+    /// Parse calibration status from CAN frame
+    ///
+    /// # Returns
+    /// * `Some(CalibrationStatus)` if calibration status frame
+    /// * `None` if not a calibration status frame
+    pub fn parse_calibration_status(frame: &CANFrame) -> Option<CalibrationStatus> {
+        if frame.id() == can_ids::CALIBRATION_STATUS {
+            protocol::decode_calibration_status(frame.data())
         } else {
             None
         }

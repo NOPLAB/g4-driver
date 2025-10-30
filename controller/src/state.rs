@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::can::{CanInterface, CanManager, MotorStatus, UsbCanDevice, VoltageStatus};
+use crate::can::{
+    CalibrationStatus, CanInterface, CanManager, MotorStatus, UsbCanDevice, VoltageStatus,
+};
 
 /// Connection state
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +134,8 @@ pub struct AppState {
     pub config_version: u16,
     /// Config CRC valid flag (from driver)
     pub config_crc_valid: bool,
+    /// Calibration status (from driver)
+    pub calibration_status: Option<CalibrationStatus>,
 }
 
 impl Default for AppState {
@@ -148,6 +152,7 @@ impl Default for AppState {
             last_status_update: 0,
             config_version: 0,
             config_crc_valid: false,
+            calibration_status: None,
         }
     }
 }

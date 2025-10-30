@@ -4,6 +4,8 @@ use dioxus::prelude::*;
 pub enum HeaderColor {
     Blue,
     Green,
+    Orange,
+    Red,
 }
 
 impl HeaderColor {
@@ -11,6 +13,8 @@ impl HeaderColor {
         match self {
             HeaderColor::Blue => "#007bff",
             HeaderColor::Green => "#28a745",
+            HeaderColor::Orange => "#fd7e14",
+            HeaderColor::Red => "#dc3545",
         }
     }
 }

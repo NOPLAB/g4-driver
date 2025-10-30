@@ -298,6 +298,17 @@ async fn can_receive_task(mut app_state: Signal<AppState>) {
                     state.config_version = version;
                     state.config_crc_valid = crc_valid;
                 }
+
+                // Parse calibration status
+                if let Some(calibration_status) = CanManager::parse_calibration_status(&frame) {
+                    info!(
+                        "Calibration status: offset={:.4}, inversed={}, success={}",
+                        calibration_status.electrical_offset,
+                        calibration_status.direction_inversed,
+                        calibration_status.success
+                    );
+                    app_state.write().calibration_status = Some(calibration_status);
+                }
             }
             Ok(None) => {
                 // Timeout - check connection health

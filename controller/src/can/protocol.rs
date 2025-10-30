@@ -21,6 +21,9 @@ pub mod can_ids {
     /// Reset config to defaults command (no data)
     pub const RESET_CONFIG: u32 = 0x105;
 
+    /// Start calibration command (no data, or optionally 1 byte for torque 0-100)
+    pub const START_CALIBRATION: u32 = 0x106;
+
     // === Motor Control Parameter Commands (0x110-0x113) ===
     /// Motor voltage params (max_voltage: f32, v_dc_bus: f32, 8 bytes)
     pub const MOTOR_VOLTAGE_PARAMS: u32 = 0x110;
@@ -61,6 +64,9 @@ pub mod can_ids {
 
     /// Config status feedback (version: u16, crc_valid: u8, 3 bytes)
     pub const CONFIG_STATUS: u32 = 0x202;
+
+    /// Calibration status feedback (electrical_offset: f32, direction_inversed: u8, success: u8, 6 bytes)
+    pub const CALIBRATION_STATUS: u32 = 0x203;
 
     /// Emergency stop (any data length)
     pub const EMERGENCY_STOP: u32 = 0x000;
@@ -107,6 +113,30 @@ impl VoltageStatus {
 }
 
 impl Default for VoltageStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Calibration status structure
+#[derive(Debug, Clone, Copy)]
+pub struct CalibrationStatus {
+    pub electrical_offset: f32,
+    pub direction_inversed: bool,
+    pub success: bool,
+}
+
+impl CalibrationStatus {
+    pub const fn new() -> Self {
+        Self {
+            electrical_offset: 0.0,
+            direction_inversed: false,
+            success: false,
+        }
+    }
+}
+
+impl Default for CalibrationStatus {
     fn default() -> Self {
         Self::new()
     }
@@ -341,6 +371,32 @@ pub fn decode_config_status(data: &[u8]) -> Option<(u16, bool)> {
     Some((version, crc_valid))
 }
 
+/// Decode calibration status from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be at least 6 bytes)
+///
+/// # Returns
+/// * `Some(CalibrationStatus)` if parsing successful
+/// * `None` if data length is incorrect
+pub fn decode_calibration_status(data: &[u8]) -> Option<CalibrationStatus> {
+    if data.len() < 6 {
+        return None;
+    }
+
+    let offset_bytes = [data[0], data[1], data[2], data[3]];
+    let electrical_offset = f32::from_le_bytes(offset_bytes);
+
+    let direction_inversed = data[4] != 0;
+    let success = data[5] != 0;
+
+    Some(CalibrationStatus {
+        electrical_offset,
+        direction_inversed,
+        success,
+    })
+}
+
 // ============================================================================
 // Motor Control Parameter Commands (Encode functions)
 // ============================================================================
@@ -422,6 +478,25 @@ pub fn encode_can_config(bitrate: u32) -> Vec<u8> {
 /// Encode control timing into CAN data
 pub fn encode_control_timing(control_period_us: u64) -> Vec<u8> {
     control_period_us.to_le_bytes().to_vec()
+}
+
+// ============================================================================
+// Calibration Commands (Encode functions)
+// ============================================================================
+
+/// Encode start calibration command into CAN data
+///
+/// # Arguments
+/// * `torque` - Optional torque value (0-100). If None, sends empty data.
+///
+/// # Returns
+/// Vec<u8> containing encoded calibration command (0 or 1 byte)
+pub fn encode_start_calibration(torque: Option<u8>) -> Vec<u8> {
+    if let Some(t) = torque {
+        vec![t.min(100)]
+    } else {
+        vec![]
+    }
 }
 
 #[cfg(test)]
