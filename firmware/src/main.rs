@@ -8,6 +8,7 @@ mod fmt;
 mod foc;
 mod hall_tim;
 mod hardware;
+mod motor_driver;
 mod state;
 mod tasks;
 mod voltage_monitor;
@@ -105,7 +106,7 @@ async fn main(spawner: Spawner) {
     }
 
     // キャリブレーション結果をCALIBRATION_RESULTに適用
-    {
+    let needs_calibration = {
         let mut calib_result = state::CALIBRATION_RESULT.lock().await;
         calib_result.electrical_offset = loaded_config.calibration_electrical_offset;
         calib_result.direction_inversed = loaded_config.calibration_direction_inversed;
@@ -121,9 +122,19 @@ async fn main(spawner: Spawner) {
                 "    Direction inversed: {}",
                 loaded_config.calibration_direction_inversed
             );
+            false // キャリブレーション不要
         } else {
             info!("  No calibration data found (calibration not performed)");
+            info!("  Auto-calibration will start after motor control task initialization");
+            true // キャリブレーション必要
         }
+    };
+
+    // 自動キャリブレーション設定
+    if needs_calibration {
+        let mut calibration_request = state::CALIBRATION_REQUEST.lock().await;
+        *calibration_request = true;
+        info!("Auto-calibration enabled");
     }
 
     // CAN task用にFlash/CRCをAsync版で再初期化
@@ -227,12 +238,6 @@ async fn main(spawner: Spawner) {
     unsafe {
         hardware::init_hall_sensor();
     }
-
-    // ベンチマーク実行
-    unsafe {
-        benchmark::enable_cycle_counter();
-    }
-    benchmark::run_inverse_park_benchmark(1000);
 
     info!("Starting FOC motor control...");
 

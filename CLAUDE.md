@@ -79,6 +79,36 @@ cargo run --release
 - **tokio-socketcan**: 非同期CAN通信
 - **tracing**: 構造化ログ
 
+### Pre-commit hooks
+
+このプロジェクトはpre-commitフックを使用してコード品質を自動チェックします。
+
+#### セットアップ
+
+```bash
+# pre-commitのインストール（初回のみ）
+pip install pre-commit
+
+# フックの有効化
+pre-commit install
+```
+
+#### 手動実行
+
+```bash
+# 全ファイルに対してフックを実行
+pre-commit run --all-files
+
+# 特定のフックのみ実行
+pre-commit run cargo-fmt-firmware --all-files
+```
+
+#### 設定内容（.pre-commit-config.yaml）
+
+- **firmware/**: cargo fmt、cargo clippy、cargo build
+- **controller/**: cargo fmt、cargo clippy、cargo test
+- **共通**: trailing-whitespace、end-of-file-fixer、check-yaml、check-toml、check-json
+
 ### CANデバッグスクリプト（scripts/can.sh）
 
 コマンドライン経由でモーターを制御・デバッグするためのBashスクリプト
@@ -187,6 +217,36 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 - **Hall角度オフセット**: 0度（ハードウェアに応じて調整可能）
 - **Hall角度補間**: 有効（連続的な角度推定により制御安定性向上）
 
+### 主要依存クレート
+
+#### ファームウェア（no_std）
+
+- **embassy-\***: 非同期ランタイムとSTM32 HAL
+  - embassy-executor: タスク実行環境
+  - embassy-stm32: STM32G4シリーズのHAL実装
+  - embassy-time: 高精度タイマー機能
+- **idsp**: 高速DSPライブラリ（Cortex-M向け三角関数最適化）
+  - `cossin()`関数で~40サイクル（libmの1/3-1/5の速度）
+  - FOC制御のリアルタイム性向上に貢献
+- **libm**: 浮動小数点演算ライブラリ（no_std環境）
+  - `sinf`, `cosf`, `sqrtf`, `roundf`など
+- **defmt**: 組み込みログフレームワーク（デバッグビルドのみ）
+  - RTT経由で高速ログ出力
+  - リリースビルドでは無効化
+- **embedded-can**: CANプロトコル抽象化
+
+#### コントローラー（std）
+
+- **Dioxus**: Reactライクなデスクトップアプリケーションフレームワーク
+  - コンポーネントベースのUI構築
+  - 状態管理とリアクティブ更新
+- **tokio-socketcan**: 非同期CAN通信ライブラリ
+  - Linux socketcan APIのRustバインディング
+  - tokio非同期ランタイムと統合
+- **tracing**: 構造化ログライブラリ
+  - ログレベル管理
+  - デバッグとエラー追跡
+
 ## ソフトウェア構造
 
 ### ファームウェアモジュール構成
@@ -195,7 +255,11 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 
 - **[firmware/src/main.rs](firmware/src/main.rs)** - メインエントリーポイント、ハードウェア初期化、タスク起動
 - **[firmware/src/config.rs](firmware/src/config.rs)** - 全設定パラメータの集約（モーター、PWM、CAN、オープンループ等）
-- **[firmware/src/state.rs](firmware/src/state.rs)** - グローバル共有状態（Mutex保護）
+- **[firmware/src/state.rs](firmware/src/state.rs)** - グローバル共有状態（Mutex保護、コンテキストベース状態管理）
+  - MotorContext - モーター制御状態のグループ化
+  - CalibrationContext - キャリブレーション状態のグループ化
+  - SystemContext - システム全体の状態のグループ化
+- **[firmware/src/motor_driver.rs](firmware/src/motor_driver.rs)** - モータードライバー抽象化（PWM制御）
 - **[firmware/src/hardware.rs](firmware/src/hardware.rs)** - ハードウェア初期化ロジック（クロック設定、割り込み設定等）
 - **[firmware/src/hall_tim.rs](firmware/src/hall_tim.rs)** - TIM4ハードウェアHallセンサーインターフェース（XORモード）
 - **[firmware/src/benchmark.rs](firmware/src/benchmark.rs)** - FOC関数のパフォーマンス測定
@@ -203,9 +267,14 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 - **[firmware/src/tasks/](firmware/src/tasks/)** - 非同期タスク実装
   - [led.rs](firmware/src/tasks/led.rs) - LED点滅タスク
   - [can.rs](firmware/src/tasks/can.rs) - CAN通信タスク
-  - [motor_control.rs](firmware/src/tasks/motor_control.rs) - モーター制御タスク
+  - [motor_control/](firmware/src/tasks/motor_control/) - モーター制御タスク（モジュール化）
+    - [mod.rs](firmware/src/tasks/motor_control/mod.rs) - メインディスパッチャー（187行）
+    - [openloop_mode.rs](firmware/src/tasks/motor_control/openloop_mode.rs) - オープンループ制御（72行）
+    - [foc_mode.rs](firmware/src/tasks/motor_control/foc_mode.rs) - FOC制御（153行）
+    - [calibration_mode.rs](firmware/src/tasks/motor_control/calibration_mode.rs) - キャリブレーション制御（110行）
   - [voltage_monitor.rs](firmware/src/tasks/voltage_monitor.rs) - 電圧監視タスク
 - **[firmware/src/foc/](firmware/src/foc/)** - FOC制御アルゴリズム実装
+  - [openloop_six_step.rs](firmware/src/foc/openloop_six_step.rs) - 6ステップ駆動制御（205行）
 - **[firmware/src/can_protocol.rs](firmware/src/can_protocol.rs)** - CANプロトコル定義とパーサー
 - **[firmware/src/fmt.rs](firmware/src/fmt.rs)** - ログマクロ（defmt/core切り替え）
 
@@ -216,14 +285,24 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 - **[controller/src/main.rs](controller/src/main.rs)** - Dioxusアプリケーションのエントリーポイント
 - **[controller/src/state.rs](controller/src/state.rs)** - アプリケーション状態管理（CAN接続、モーターステータス等）
 - **[controller/src/can/](controller/src/can/)** - CAN通信モジュール
-  - [mod.rs](controller/src/can/mod.rs) - CAN モジュール公開インターフェース
+  - [can.rs](controller/src/can.rs) - CAN モジュール公開インターフェース（Rust 2018+スタイル）
   - [protocol.rs](controller/src/can/protocol.rs) - CANプロトコル実装（firmwareと共通のロジック）
   - [manager.rs](controller/src/can/manager.rs) - CAN接続管理、送受信ロジック
+  - [setup.rs](controller/src/can/setup.rs) - CANインターフェース検出・設定ユーティリティ（slcan、vcan、can0等のセットアップ）
 - **[controller/src/ui/](controller/src/ui/)** - Dioxus UIコンポーネント
-  - [mod.rs](controller/src/ui/mod.rs) - UI モジュール公開インターフェース
+  - [ui.rs](controller/src/ui.rs) - UI モジュール公開インターフェース（Rust 2018+スタイル）
   - [connection.rs](controller/src/ui/connection.rs) - CAN接続UI（接続バー、インターフェース選択）
   - [control.rs](controller/src/ui/control.rs) - モーター制御UI（速度指令、有効/無効ボタン）
   - [settings.rs](controller/src/ui/settings.rs) - 設定UI（PIゲイン、オフセット、最小電圧等）
+  - [components.rs](controller/src/ui/components.rs) - コンポーネントモジュール公開インターフェース（Rust 2018+スタイル）
+  - [components/](controller/src/ui/components/) - 再利用可能UIコンポーネント
+    - banner.rs - バナー表示コンポーネント
+    - button.rs - カスタムボタンコンポーネント
+    - card.rs - カードレイアウトコンポーネント
+    - number_input.rs - 数値入力フィールド
+    - section_header.rs - セクションヘッダー
+    - status_indicator.rs - ステータスインジケーター
+    - toggle.rs - トグルスイッチコンポーネント
 
 ### Embassy非同期ランタイム
 - `#[embassy_executor::main]` でメインループ
@@ -308,9 +387,28 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 
 #### Transforms ([firmware/src/foc/transforms.rs](firmware/src/foc/transforms.rs))
 - `inverse_park()`: dq → αβ座標変換（回転座標系 → 静止座標系）
+  - **idsp最適化**: デフォルトで`idsp::cossin()`を使用（~40サイクル、Cortex-M最適化）
+  - libm版も実装（~100-200サイクル、`USE_IDSP_COSSIN`フラグで切替可能）
+  - ベンチマーク関数内蔵（`benchmark_inverse_park()`）
 - `inverse_clarke()`: αβ → UVW 3相変換
 - `limit_voltage()`: dq電圧ベクトルの円形制限
 - `normalize_angle()`: 角度正規化（0～2π）
+
+#### Calibration ([firmware/src/foc/calibration.rs](firmware/src/foc/calibration.rs))
+
+- モーターの自動キャリブレーション機能
+- 電気角オフセットの自動検出
+- 回転方向の自動検出
+- キャリブレーション状態管理：Init → FindDirection → FindOffset → ReturnToStart → Completed
+- キャリブレーション結果（電気角オフセット、方向反転フラグ、成功フラグ）
+
+#### ShaftPosition ([firmware/src/foc/shaft_position.rs](firmware/src/foc/shaft_position.rs))
+
+- シャフト位置の追跡管理
+- 複数回転のカウント（正転/逆転）
+- 角度（0～2π）と回転数の両方を保持
+- 方向反転対応
+- 位置リセット機能
 
 #### OpenLoopRampUp ([firmware/src/foc.rs:15-124](firmware/src/foc.rs#L15-L124))
 - 始動時のオープンループ制御（強制転流）
@@ -362,17 +460,34 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
   - `candump`/`cansend` でCAN通信
 
 ### Config/State/Hardware モジュール
-- **[firmware/src/config.rs](firmware/src/config.rs)**: 全設定パラメータを集約（マジックナンバー排除）
-  - モーターパラメータ（極対数、電圧、PIゲイン等）
-  - PWM設定（周波数、デッドタイム）
-  - CAN設定（ビットレート）
+
+#### 設定管理（firmware/src/config/）
+
+- **[firmware/src/config/params.rs](firmware/src/config/params.rs)**: デフォルトパラメータ定義
+  - モーターパラメータ（極対数、ゲイン、電圧等）
   - オープンループ始動パラメータ
+  - 制御周期、フィルタ係数等
+  - 全てのマジックナンバーを定数化
+- **[firmware/src/config/eeprom.rs](firmware/src/config/eeprom.rs)**: EEPROM不揮発性メモリ管理
+  - フラッシュメモリを使用した設定の永続化
+  - パラメータの保存・読み込み
+  - CRC検証による破損チェック
+- **[firmware/src/config/storage.rs](firmware/src/config/storage.rs)**: 設定ストレージ管理
+  - 設定の読み書きインターフェース
+  - デフォルト値の管理
+  - 実行時設定変更のサポート
+
+#### 状態管理
+
 - **[firmware/src/state.rs](firmware/src/state.rs)**: タスク間共有状態（Mutex保護）
   - `TARGET_SPEED`: 目標速度 [RPM]
   - `SPEED_PI_GAINS`: PIゲイン (Kp, Ki)
   - `MOTOR_ENABLE`: モーター有効/無効フラグ
   - `MOTOR_STATUS`: モーターステータス（CAN送信用）
   - `VOLTAGE_STATE`: 電圧監視ステータス（CAN送信用）
+
+#### ハードウェア初期化
+
 - **[firmware/src/hardware.rs](firmware/src/hardware.rs)**: ハードウェア初期化ロジック
   - `create_clock_config()`: RCC/PLL設定（170MHz生成）
   - `init_hall_sensor()`: TIM4 Hallインターフェース初期化
@@ -450,3 +565,30 @@ CAN_INTERFACE=slcan0 ./scripts/can.sh monitor
 - グローバル状態を`state.rs`に集約（Mutex保護）
 - ハードウェア初期化を`hardware.rs`に分離
 - 可読性・保守性・テスタビリティの向上
+
+### 2025年リファクタリング：モジュール分離とコード構造化
+**目的**: 肥大化したファイルを分離し、責任を明確化
+
+1. **モーター制御タスクの分離**（[firmware/src/tasks/motor_control/](firmware/src/tasks/motor_control/)）
+   - 448行の単一ファイル → 187行のディスパッチャー + 3つの独立モジュール（58%削減）
+   - 各制御モードを独立したモジュールに分離：
+     - `openloop_mode.rs` (72行) - オープンループ制御
+     - `foc_mode.rs` (153行) - FOC制御
+     - `calibration_mode.rs` (110行) - キャリブレーション制御
+   - 責任の明確化とテストのしやすさが向上
+
+2. **PWM制御の抽象化**（[firmware/src/motor_driver.rs](firmware/src/motor_driver.rs)）
+   - PWMハードウェアへの直接アクセスを隠蔽
+   - 高レベルな制御APIを提供（set_duty_uvw、enable_all_channels、stop等）
+   - 各制御モードからのハードウェア依存を排除
+
+3. **OpenLoopSixStepの独立モジュール化**（[firmware/src/foc/openloop_six_step.rs](firmware/src/foc/openloop_six_step.rs)）
+   - foc.rsの肥大化を防止（234行を独立ファイルに移動）
+   - 他のFOCコンポーネントと一貫性のあるモジュール構造に
+
+4. **状態管理の改善**（[firmware/src/state.rs](firmware/src/state.rs)）
+   - 12個の独立したMutex → 論理的にグループ化された3つのコンテキスト
+   - `MotorContext` - モーター制御状態（速度、PIゲイン、有効/無効、ステータス、モード）
+   - `CalibrationContext` - キャリブレーション状態（リクエスト、トルク、結果）
+   - `SystemContext` - システム全体の状態（電圧、設定、バージョン、CRC）
+   - 状態アクセスの簡潔化と責任範囲の明確化（後方互換性維持）

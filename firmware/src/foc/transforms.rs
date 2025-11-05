@@ -34,9 +34,13 @@ pub fn inverse_park(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
 fn inverse_park_idsp(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
     // Convert theta (radians, 0 to 2π) to idsp phase format (i32, full scale)
     // idsp uses i32::MIN (-2^31) to i32::MAX (2^31-1) to represent -π to π
-    // So: phase = theta * (2^31 / π)
+    // First normalize theta from [0, 2π] to [-π, π]
+    use core::f32::consts::{PI, TAU};
+    let normalized_theta = if theta > PI { theta - TAU } else { theta };
+
+    // Then scale to i32 range: phase = normalized_theta * (2^31 / π)
     const SCALE: f32 = 2147483648.0 / core::f32::consts::PI; // 2^31 / π
-    let phase: i32 = (theta * SCALE) as i32;
+    let phase: i32 = (normalized_theta * SCALE) as i32;
 
     // cossin() returns (cos, sin) as (i32, i32) in range [-2^31, 2^31-1]
     let (cos_i32, sin_i32) = idsp::cossin(phase);
@@ -144,6 +148,7 @@ pub fn normalize_angle(angle: f32) -> f32 {
 /// # Returns
 /// Tuple of (idsp_result, libm_result, idsp_ticks, libm_ticks)
 #[cfg(not(test))]
+#[allow(dead_code)]
 pub fn benchmark_inverse_park(iterations: u32) -> ((f32, f32), (f32, f32), u32, u32) {
     use cortex_m::peripheral::DWT;
 

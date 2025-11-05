@@ -124,8 +124,17 @@ impl HallSensor {
             }
 
             // Calculate electrical angle from mechanical angle
-            let electrical_angle =
+            let mut electrical_angle =
                 self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+            // Normalize electrical angle to [0, TAU)
+            while electrical_angle >= TAU {
+                electrical_angle -= TAU;
+            }
+            while electrical_angle < 0.0 {
+                electrical_angle += TAU;
+            }
+
             return (electrical_angle, self.speed_rpm);
         }
 
@@ -133,8 +142,17 @@ impl HallSensor {
         let normalized_state = HALL_STATE_TABLE[raw_hall_state as usize];
         if normalized_state == 255 {
             // Invalid state (should not happen after is_valid_state check, but safety check)
-            let electrical_angle =
+            let mut electrical_angle =
                 self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+            // Normalize electrical angle to [0, TAU)
+            while electrical_angle >= TAU {
+                electrical_angle -= TAU;
+            }
+            while electrical_angle < 0.0 {
+                electrical_angle += TAU;
+            }
+
             return (electrical_angle, self.speed_rpm);
         }
 
@@ -156,8 +174,16 @@ impl HallSensor {
             }
 
             // Calculate electrical angle: mechanical_angle * pole_pairs - offset
-            let electrical_angle =
+            let mut electrical_angle =
                 self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+            // Normalize electrical angle to [0, TAU)
+            while electrical_angle >= TAU {
+                electrical_angle -= TAU;
+            }
+            while electrical_angle < 0.0 {
+                electrical_angle += TAU;
+            }
 
             return (electrical_angle, self.speed_rpm);
         }
@@ -242,8 +268,16 @@ impl HallSensor {
         }
 
         // Calculate electrical angle: mechanical_angle * pole_pairs - offset (foc-simple formula)
-        let electrical_angle =
+        let mut electrical_angle =
             self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+
+        // Normalize electrical angle to [0, TAU)
+        while electrical_angle >= TAU {
+            electrical_angle -= TAU;
+        }
+        while electrical_angle < 0.0 {
+            electrical_angle += TAU;
+        }
 
         (electrical_angle, self.speed_rpm)
     }

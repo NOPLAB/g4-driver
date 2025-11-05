@@ -9,6 +9,7 @@ use crate::foc;
 ///
 /// # Safety
 /// Cortex-Mペリフェラルへの直接アクセスを含む
+#[allow(dead_code)]
 pub unsafe fn enable_cycle_counter() {
     use core::ptr::{read_volatile, write_volatile};
 
@@ -35,6 +36,7 @@ pub unsafe fn enable_cycle_counter() {
 ///
 /// # 引数
 /// * `iterations` - ベンチマーク実行回数
+#[allow(dead_code)]
 pub fn run_inverse_park_benchmark(iterations: u32) {
     info!("Running inverse_park() benchmark...");
 

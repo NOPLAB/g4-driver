@@ -120,7 +120,7 @@ impl StoredConfig {
             max_voltage: params::DEFAULT_MAX_VOLTAGE,
             v_dc_bus: params::DEFAULT_V_DC_BUS,
             pole_pairs: params::DEFAULT_POLE_PAIRS,
-            max_duty: params::DEFAULT_MAX_DUTY,
+            max_duty: 100, // 注: この値は使用されず、実行時にPWMから取得される
             speed_filter_alpha: params::DEFAULT_SPEED_FILTER_ALPHA,
             hall_angle_offset: params::DEFAULT_HALL_ANGLE_OFFSET_DEG, // デフォルトはオフセットなし
             enable_angle_interpolation: true,                         // デフォルトで有効

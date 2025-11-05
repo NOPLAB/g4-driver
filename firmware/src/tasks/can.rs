@@ -20,8 +20,8 @@ use crate::can_protocol::{
 use crate::config;
 use crate::fmt::*;
 use crate::state::{
-    CALIBRATION_REQUEST, CALIBRATION_RESULT, CONFIG_CRC_VALID, CONFIG_VERSION, MOTOR_ENABLE,
-    MOTOR_STATUS, RUNTIME_CONFIG, SPEED_PI_GAINS, TARGET_SPEED, VOLTAGE_STATE,
+    CALIBRATION_REQUEST, CALIBRATION_RESULT, CALIBRATION_TORQUE, CONFIG_CRC_VALID, CONFIG_VERSION,
+    MOTOR_ENABLE, MOTOR_STATUS, RUNTIME_CONFIG, SPEED_PI_GAINS, TARGET_SPEED, VOLTAGE_STATE,
 };
 
 /// CAN通信タスク - モーター制御コマンド処理とステータス送信
@@ -78,6 +78,14 @@ pub async fn can_task(
                             }
                             can_ids::START_CALIBRATION => {
                                 info!("Start calibration command received");
+                                // トルク値をパース（1バイト, 0-100, デフォルト20）
+                                let torque = if !data.is_empty() {
+                                    data[0].min(100) // 0-100に制限
+                                } else {
+                                    20 // デフォルト値
+                                };
+                                info!("Calibration torque: {}", torque);
+                                *CALIBRATION_TORQUE.lock().await = torque;
                                 // キャリブレーションリクエストフラグを設定
                                 *CALIBRATION_REQUEST.lock().await = true;
                                 info!("Calibration request flag set");
