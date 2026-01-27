@@ -5,7 +5,6 @@
 use crate::config::advance_angle::{
     BASE_ADVANCE_DEG, MAX_ADVANCE_DEG, MAX_SPEED_FOR_ADVANCE, MIN_SPEED_FOR_ADVANCE,
 };
-use crate::fmt::*;
 use crate::hall_tim;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
@@ -129,13 +128,16 @@ impl HallSensor {
     /// # Returns
     /// Tuple of (electrical_angle in radians, speed in RPM)
     pub fn update(&mut self, dt: f32) -> (f32, f32) {
-        // Get Hall state from TIM4 interrupt handler (captured on edge)
+        // Get Hall state and period from TIM4 (read once for consistency)
         let raw_hall_state = hall_tim::get_hall_state();
+        let period_cycles = hall_tim::get_period_cycles();
+        let is_timeout = hall_tim::is_timeout();
 
         // Validate hall state
         if !Self::is_valid_state(raw_hall_state) {
             // Check timeout from TIM4
-            if hall_tim::is_timeout() {
+            // period_cycles == 0 も条件に含めることで、競合による誤判定を防止
+            if is_timeout && period_cycles == 0 {
                 self.speed_rpm = 0.0;
                 self.time_since_edge = 0.0;
             } else {
@@ -143,8 +145,10 @@ impl HallSensor {
             }
 
             // Calculate electrical angle from mechanical angle
-            let mut electrical_angle =
-                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            // 機械角ベース + 固定オフセット + キャリブレーションオフセット
+            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
+                + MECHANICAL_TO_ELECTRICAL_OFFSET
+                + self.electrical_offset;
 
             // Normalize electrical angle to [0, TAU)
             while electrical_angle >= TAU {
@@ -161,8 +165,9 @@ impl HallSensor {
         let normalized_state = HALL_STATE_TABLE[raw_hall_state as usize];
         if normalized_state == 255 {
             // Invalid state (should not happen after is_valid_state check, but safety check)
-            let mut electrical_angle =
-                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
+                + MECHANICAL_TO_ELECTRICAL_OFFSET
+                + self.electrical_offset;
 
             // Normalize electrical angle to [0, TAU)
             while electrical_angle >= TAU {
@@ -175,12 +180,10 @@ impl HallSensor {
             return (electrical_angle, self.speed_rpm);
         }
 
-        // Get period from TIM4 and calculate instant speed
-        let period_cycles = hall_tim::get_period_cycles();
-
         // Check for timeout (1秒以上Hallエッジがない場合のみ速度を0に)
-        // period_cycles == 0 の場合は前回の速度を維持（一時的なノイズ対策）
-        if hall_tim::is_timeout() {
+        // period_cycles == 0 も条件に含めることで、TIMEOUT_FLAG と PERIOD_CYCLES の
+        // 更新競合による誤判定を防止（Relaxed ordering 対策）
+        if is_timeout && period_cycles == 0 {
             self.speed_rpm = 0.0;
             self.time_since_edge = 0.0;
 
@@ -193,9 +196,10 @@ impl HallSensor {
                 self.mechanical_angle -= TAU;
             }
 
-            // Calculate electrical angle: mechanical_angle * pole_pairs - offset
-            let mut electrical_angle =
-                self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+            // 電気角計算: 機械角ベース + 固定オフセット + キャリブレーションオフセット
+            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
+                + MECHANICAL_TO_ELECTRICAL_OFFSET
+                + self.electrical_offset;
 
             // Normalize electrical angle to [0, TAU)
             while electrical_angle >= TAU {
@@ -287,16 +291,16 @@ impl HallSensor {
                     + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
             }
 
-            trace!(
-                "Hall edge: {} -> {} (normalized: {} -> {}), period={} cycles, instant_rpm={}, filtered_rpm={}",
-                self.prev_state,
-                normalized_state,
-                self.prev_state,
-                normalized_state,
-                period_cycles,
-                instant_rpm,
-                self.speed_rpm
-            );
+            // trace!(
+            //     "Hall edge: {} -> {} (normalized: {} -> {}), period={} cycles, instant_rpm={}, filtered_rpm={}",
+            //     self.prev_state,
+            //     normalized_state,
+            //     self.prev_state,
+            //     normalized_state,
+            //     period_cycles,
+            //     instant_rpm,
+            //     self.speed_rpm
+            // );
 
             // Reset edge timer
             self.time_since_edge = 0.0;
@@ -406,9 +410,20 @@ impl HallSensor {
     }
 
     /// Get current electrical angle in radians
+    /// 機械角ベース + 固定オフセット + キャリブレーションオフセット
     #[allow(dead_code)]
     pub fn get_electrical_angle(&self) -> f32 {
-        self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset
+        let mut angle = self.mechanical_angle * (self.pole_pairs as f32)
+            + MECHANICAL_TO_ELECTRICAL_OFFSET
+            + self.electrical_offset;
+        // Normalize to [0, TAU)
+        while angle >= TAU {
+            angle -= TAU;
+        }
+        while angle < 0.0 {
+            angle += TAU;
+        }
+        angle
     }
 
     /// Get current mechanical angle in radians

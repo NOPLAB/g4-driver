@@ -35,12 +35,17 @@ pub async fn execute(
     ramped_target_speed: &mut f32,
     dt: f32,
 ) -> bool {
-    // Hall状態の確認（有効な状態：1-6）
+    // 電気角と速度を取得（TIM4ハードウェアベース、foc-simple互換計算）
+    // hall_sensor.update() 内で Hall 状態の検証も行われる
+    let (hall_electrical_angle, speed_rpm) = hall_sensor.update(dt);
+
+    // Hall状態の確認（hall_sensor.update() と同じ値を使用するため再取得）
     let hall_state = hall_tim::get_hall_state();
     let is_valid_hall = (1..=6).contains(&hall_state);
 
     // Hallセンサが無効な場合の処理
     // 注意: ramped_target_speed はリセットしない（一時的なノイズで完全停止しないように）
+    // 注意: speed_rpm は hall_sensor.update() で取得済みなので、前回値が維持されている
     if !is_valid_hall {
         // PWMを50%（中立）に設定するが、完全停止はしない
         motor_driver.set_duty_uvw(
@@ -52,9 +57,6 @@ pub async fn execute(
         speed_pi.reset();
         return false;
     }
-
-    // 電気角と速度を取得（TIM4ハードウェアベース、foc-simple互換計算）
-    let (hall_electrical_angle, speed_rpm) = hall_sensor.update(dt);
 
     // PIゲイン更新チェック（非同期で更新された場合）
     {
