@@ -58,15 +58,19 @@ pub mod can_ids {
     pub const CONTROL_TIMING: u32 = 0x150;
 
     /// Motor status feedback (speed: f32, angle: f32, 8 bytes)
+    #[allow(dead_code)]
     pub const STATUS: u32 = 0x200;
 
     /// Voltage status feedback (voltage: f32, flags: u8, 5 bytes)
+    #[allow(dead_code)]
     pub const VOLTAGE_STATUS: u32 = 0x201;
 
     /// Config status feedback (version: u16, crc_valid: u8, 3 bytes)
+    #[allow(dead_code)]
     pub const CONFIG_STATUS: u32 = 0x202;
 
     /// Calibration status feedback (electrical_offset: f32, direction_inversed: u8, success: u8, 6 bytes)
+    #[allow(dead_code)]
     pub const CALIBRATION_STATUS: u32 = 0x203;
 
     /// Emergency stop (any data length)
@@ -195,6 +199,7 @@ pub fn parse_enable_command(data: &[u8]) -> Option<bool> {
 ///
 /// # Returns
 /// 8-byte array containing encoded status
+#[allow(dead_code)]
 pub fn encode_status(speed_rpm: f32, electrical_angle: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
 
@@ -244,6 +249,7 @@ pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
 ///
 /// # Returns
 /// 5-byte array containing encoded voltage status
+#[allow(dead_code)]
 pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool) -> [u8; 5] {
     let mut data = [0u8; 5];
 
@@ -302,6 +308,7 @@ pub fn decode_voltage_status(data: &[u8]) -> Option<VoltageStatus> {
 ///
 /// # Returns
 /// 3-byte array containing encoded config status
+#[allow(dead_code)]
 pub fn encode_config_status(version: u16, crc_valid: bool) -> [u8; 3] {
     let mut data = [0u8; 3];
 
@@ -667,6 +674,7 @@ pub fn encode_control_timing(control_period_us: u64) -> [u8; 8] {
 ///
 /// # Returns
 /// 6-byte array containing encoded calibration status
+#[allow(dead_code)]
 pub fn encode_calibration_status(
     electrical_offset: f32,
     direction_inversed: bool,

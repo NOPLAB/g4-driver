@@ -61,10 +61,10 @@ async fn main(spawner: Spawner) {
     let mut config_loader = ConfigLoader::new(p.FLASH, p.CRC);
     let needs_calibration = config_loader.load_and_apply().await;
 
-    // 自動キャリブレーション設定
+    // 自動キャリブレーション設定（設定が未保存の場合に実行）
     if needs_calibration {
         state::set_calibration_request(true).await;
-        info!("Auto-calibration enabled");
+        info!("Auto-calibration enabled (no saved config found)");
     }
 
     // Flash/CRCをcan_task用に取得（Peripherals::steal()を使わずに所有権を移譲）

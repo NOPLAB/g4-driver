@@ -32,9 +32,9 @@ impl MotorContext {
     /// デフォルト値で新しいモーターコンテキストを作成
     pub const fn new() -> Self {
         Self {
-            target_speed: 2000.0, // デバッグ用: 起動時に2000 RPM
+            target_speed: 2000.0,
             pi_gains: (DEFAULT_SPEED_KP, DEFAULT_SPEED_KI),
-            enabled: true, // デバッグ用: 起動時に有効化
+            enabled: true,
             status: MotorStatus::new(),
             control_mode: ControlMode::OpenLoop,
         }
@@ -58,7 +58,7 @@ impl CalibrationContext {
     /// デフォルト値で新しいキャリブレーションコンテキストを作成
     pub const fn new() -> Self {
         Self {
-            request: false,
+            request: true,
             torque: 10,
             result: CalibrationResult {
                 electrical_offset: 0.0,
@@ -190,6 +190,7 @@ pub async fn set_calibration_result(result: CalibrationResult) {
 // ========================================
 
 /// 電圧状態を取得
+#[allow(dead_code)]
 pub async fn get_voltage_state() -> VoltageMonitorState {
     SYSTEM_CONTEXT.lock().await.voltage_state
 }
@@ -205,11 +206,13 @@ pub async fn get_runtime_config() -> StoredConfig {
 }
 
 /// 設定バージョンを取得
+#[allow(dead_code)]
 pub async fn get_config_version() -> u16 {
     SYSTEM_CONTEXT.lock().await.config_version
 }
 
 /// CRC検証フラグを取得
+#[allow(dead_code)]
 pub async fn get_config_crc_valid() -> bool {
     SYSTEM_CONTEXT.lock().await.config_crc_valid
 }

@@ -39,11 +39,17 @@ pub async fn execute(
     let hall_state = hall_tim::get_hall_state();
     let is_valid_hall = (1..=6).contains(&hall_state);
 
-    // Hallセンサが無効な場合の安全処理
+    // Hallセンサが無効な場合の処理
+    // 注意: ramped_target_speed はリセットしない（一時的なノイズで完全停止しないように）
     if !is_valid_hall {
-        motor_driver.stop();
+        // PWMを50%（中立）に設定するが、完全停止はしない
+        motor_driver.set_duty_uvw(
+            motor_driver.max_duty() / 2,
+            motor_driver.max_duty() / 2,
+            motor_driver.max_duty() / 2,
+        );
+        // PI積分項のみリセット（急激な応答を防ぐ）
         speed_pi.reset();
-        *ramped_target_speed = 0.0;
         return false;
     }
 
@@ -99,8 +105,12 @@ pub async fn execute(
         }
     }
 
-    // 電圧ベクトル制限
-    let (vd_limited, vq_limited) = limit_voltage(vd_cmd, vq_cmd, DEFAULT_MAX_VOLTAGE);
+    // 電圧ベクトル制限（30%に制限）
+    let max_voltage = DEFAULT_V_DC_BUS * 0.30;
+
+    // 逆回転防止：Vqを正の値のみに制限（一方向回転）
+    let vq_cmd_positive = vq_cmd.max(0.0);
+    let (vd_limited, vq_limited) = limit_voltage(vd_cmd, vq_cmd_positive, max_voltage);
 
     // Park逆変換（dq → αβ）
     let (v_alpha, v_beta) = inverse_park(vd_limited, vq_limited, hall_electrical_angle);
@@ -114,9 +124,10 @@ pub async fn execute(
     if count >= 250 {
         FOC_LOG_COUNTER.store(0, Ordering::Relaxed);
         let angle_deg = hall_electrical_angle * 180.0 / core::f32::consts::PI;
+        let advance_deg = hall_sensor.get_current_advance_deg();
         trace!(
-            "[FOC Detail] Hall={}, Angle={}rad ({}°), Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}",
-            hall_state, hall_electrical_angle, angle_deg, vq_limited, v_alpha, v_beta, duty_u, duty_v, duty_w
+            "[FOC Detail] Hall={}, Angle={}° (adv={}°), Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}",
+            hall_state, angle_deg, advance_deg, vq_limited, v_alpha, v_beta, duty_u, duty_v, duty_w
         );
     }
 

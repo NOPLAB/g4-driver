@@ -257,6 +257,14 @@ pub fn reset_state() {
     TIMEOUT_FLAG.store(0, Ordering::Relaxed); // タイムアウトフラグもクリア
 }
 
+/// 最大許容速度 [RPM]（これを超える速度はノイズとして無視）
+const MAX_VALID_RPM: f32 = 10000.0;
+
+/// 最小周期サイクル数（これ未満はノイズとして無視）
+/// 10000 RPM = 170MHz / (cycles * 6 * 6 / 60) → cycles = 170M * 10 / (10000 * 36) ≈ 4722 cycles
+/// 安全マージンを持って1000 cyclesを最小値とする
+const MIN_VALID_PERIOD_CYCLES: u32 = 1000;
+
 /// 周期から速度（RPM）を計算
 ///
 /// # Arguments
@@ -264,10 +272,11 @@ pub fn reset_state() {
 /// * `pole_pairs` - モーターの極対数
 ///
 /// # Returns
-/// 機械角速度 [RPM]
+/// 機械角速度 [RPM]（異常値の場合は0.0を返す）
 #[inline(always)]
 pub fn calculate_speed_rpm(period_cycles: u32, pole_pairs: u8) -> f32 {
-    if period_cycles == 0 {
+    // 周期が0または最小値未満の場合はノイズとして0を返す
+    if period_cycles < MIN_VALID_PERIOD_CYCLES {
         return 0.0;
     }
 
@@ -281,5 +290,12 @@ pub fn calculate_speed_rpm(period_cycles: u32, pole_pairs: u8) -> f32 {
     let freq_hz = SYSTEM_CLOCK_HZ / period_cycles as f32; // エッジ周波数 [Hz]
     let elec_rpm = freq_hz * 60.0 / STEPS_PER_ELEC_REV; // 電気角RPM
 
-    elec_rpm / pole_pairs as f32 // 機械角RPM
+    let rpm = elec_rpm / pole_pairs as f32; // 機械角RPM
+
+    // 最大速度を超える場合はノイズとして0を返す
+    if rpm > MAX_VALID_RPM {
+        return 0.0;
+    }
+
+    rpm
 }

@@ -180,6 +180,7 @@ impl OpenLoopSixStep {
     }
 
     /// 目標速度に達したかチェック
+    #[allow(dead_code)]
     pub fn is_target_reached(&self) -> bool {
         self.step_period <= self.min_step_period
     }

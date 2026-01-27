@@ -51,6 +51,9 @@ impl Default for CalibrationResult {
     }
 }
 
+/// 各セクターでのサンプル数
+const SAMPLES_PER_SECTOR: u8 = 10;
+
 /// モーター自動キャリブレーション
 pub struct MotorCalibration {
     /// 現在の状態
@@ -67,6 +70,10 @@ pub struct MotorCalibration {
     result: CalibrationResult,
     /// 各Hallセクターでの角度記録 [rad]（インデックス0は未使用、1-6がセクター1-6）
     sector_angles: [Option<f32>; 7],
+    /// 各セクターのサンプル合計 [rad]
+    sector_sample_sum: [f32; 7],
+    /// 各セクターのサンプル数
+    sector_sample_count: [u8; 7],
     /// 前回のHallセクター（セクター遷移検出用）
     prev_hall_sector: u8,
     /// 現在のセクターでの待機カウンター（角度安定化のため）
@@ -88,6 +95,8 @@ impl MotorCalibration {
             shaft_position_act: ShaftPosition::new(),
             result: CalibrationResult::new(),
             sector_angles: [None; 7],
+            sector_sample_sum: [0.0; 7],
+            sector_sample_count: [0; 7],
             prev_hall_sector: 0,
             sector_wait_counter: 0,
         }
@@ -98,12 +107,15 @@ impl MotorCalibration {
         info!("Starting motor calibration...");
         info!("  Pole pairs: {}", self.pole_pairs);
         info!("  Torque: {}", self.torque);
+        info!("  Samples per sector: {}", SAMPLES_PER_SECTOR);
 
         self.state = CalibrationState::Init;
         self.shaft_position_req.reset();
         self.shaft_position_act.reset();
         self.result = CalibrationResult::new();
         self.sector_angles = [None; 7];
+        self.sector_sample_sum = [0.0; 7];
+        self.sector_sample_count = [0; 7];
         self.prev_hall_sector = 0;
         self.sector_wait_counter = 0;
     }
@@ -151,22 +163,6 @@ impl MotorCalibration {
             }
 
             CalibrationState::FindDirection => {
-                // デバッグ：定期的に状態をログ出力（2500サイクルごと = 1秒）
-                static mut DEBUG_COUNTER_FD: u32 = 0;
-                unsafe {
-                    DEBUG_COUNTER_FD += 1;
-                    if DEBUG_COUNTER_FD >= 2500 {
-                        DEBUG_COUNTER_FD = 0;
-                        info!(
-                            "[Calibration FindDirection] Req: {} rot + {} rad, Act: {} rot + {} rad",
-                            self.shaft_position_req.rotations,
-                            self.shaft_position_req.angle,
-                            self.shaft_position_act.rotations,
-                            self.shaft_position_act.angle
-                        );
-                    }
-                }
-
                 // 目標: 1回転以上（1電気角回転）
                 if self.shaft_position_req.rotations >= 1 {
                     // モーターが動いたかチェック
@@ -194,9 +190,9 @@ impl MotorCalibration {
                     self.state = CalibrationState::MeasureSectors;
                     info!("Calibration: FindDirection -> MeasureSectors");
                 } else {
-                    // ゆっくり回転（5 rad/s ≈ 48 RPM）- より遅く
-                    // 2.5kHz更新なので、1ステップあたり: 5 / 2500 = 0.002 rad
-                    self.shaft_position_req.increment(0.002);
+                    // ゆっくり回転（2.5 rad/s ≈ 24 RPM）- ゆっくり
+                    // 2.5kHz更新なので、1ステップあたり: 2.5 / 2500 = 0.001 rad
+                    self.shaft_position_req.increment(0.001);
                 }
 
                 // 要求位置の電気角を返す（オフセット未適用）
@@ -207,24 +203,6 @@ impl MotorCalibration {
             CalibrationState::MeasureSectors => {
                 // 現在のHallセクターを取得（1-6）
                 let current_hall = hall_tim::get_hall_state();
-
-                // デバッグ：定期的に状態をログ出力（2500サイクルごと = 1秒）
-                static mut DEBUG_COUNTER: u32 = 0;
-                unsafe {
-                    DEBUG_COUNTER += 1;
-                    if DEBUG_COUNTER >= 2500 {
-                        DEBUG_COUNTER = 0;
-                        let recorded_count =
-                            (1..=6).filter(|&i| self.sector_angles[i].is_some()).count();
-                        info!(
-                            "[Calibration Debug] Hall={}, Req pos={} rad, Act pos={} rad, Recorded: {}/6 sectors",
-                            current_hall,
-                            self.shaft_position_req.get_position(),
-                            self.shaft_position_act.get_position(),
-                            recorded_count
-                        );
-                    }
-                }
 
                 // 有効なHallセクターかチェック
                 if (1..=6).contains(&current_hall) {
@@ -238,33 +216,44 @@ impl MotorCalibration {
                         self.sector_wait_counter = 0;
                     }
 
-                    // 角度安定化のため待機（25サイクル = 10ms @ 2.5kHz）
-                    if self.sector_wait_counter < 25 {
-                        self.sector_wait_counter += 1;
-                    } else if self.sector_angles[current_hall as usize].is_none() {
-                        // このセクターの角度をまだ記録していない場合
-                        let angle = self.shaft_position_act.get_angle();
-                        self.sector_angles[current_hall as usize] = Some(angle);
-                        info!(
-                            "Calibration: Recorded angle for sector {}: {} rad ({} deg)",
-                            current_hall,
-                            angle,
-                            angle * 180.0 / core::f32::consts::PI
-                        );
+                    let sector_idx = current_hall as usize;
 
-                        // 全セクターの角度が記録されたかチェック
-                        let all_recorded = (1..=6).all(|i| self.sector_angles[i].is_some());
-                        if all_recorded {
-                            // オフセットを計算
-                            self.calculate_offset();
-                            self.state = CalibrationState::ReturnToStart;
-                            info!("Calibration: MeasureSectors -> ReturnToStart");
+                    // 角度安定化のため待機（125サイクル = 50ms @ 2.5kHz）
+                    if self.sector_wait_counter < 125 {
+                        self.sector_wait_counter += 1;
+                    } else if self.sector_sample_count[sector_idx] < SAMPLES_PER_SECTOR {
+                        // サンプリング中：角度を蓄積
+                        let angle = self.shaft_position_act.get_angle();
+                        self.sector_sample_sum[sector_idx] += angle;
+                        self.sector_sample_count[sector_idx] += 1;
+
+                        // 目標サンプル数に達したら平均を計算
+                        if self.sector_sample_count[sector_idx] >= SAMPLES_PER_SECTOR {
+                            let avg_angle = self.sector_sample_sum[sector_idx]
+                                / self.sector_sample_count[sector_idx] as f32;
+                            self.sector_angles[sector_idx] = Some(avg_angle);
+                            info!(
+                                "Calibration: Recorded angle for sector {} ({} samples): {} rad ({} deg)",
+                                current_hall,
+                                SAMPLES_PER_SECTOR,
+                                avg_angle,
+                                avg_angle * 180.0 / core::f32::consts::PI
+                            );
+
+                            // 全セクターの角度が記録されたかチェック
+                            let all_recorded = (1..=6).all(|i| self.sector_angles[i].is_some());
+                            if all_recorded {
+                                // オフセットを計算
+                                self.calculate_offset();
+                                self.state = CalibrationState::ReturnToStart;
+                                info!("Calibration: MeasureSectors -> ReturnToStart");
+                            }
                         }
                     }
                 }
 
-                // 引き続きゆっくり回転（5 rad/s ≈ 48 RPM）
-                self.shaft_position_req.increment(0.002);
+                // 引き続きゆっくり回転（2.5 rad/s ≈ 24 RPM）
+                self.shaft_position_req.increment(0.001);
 
                 let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
                 Ok((electrical_angle, self.torque))
@@ -287,8 +276,8 @@ impl MotorCalibration {
                     self.result.success = true;
                     Ok((0.0, 0.0)) // トルク0で停止
                 } else {
-                    // 逆方向に回転（開始位置に戻る）
-                    self.shaft_position_req.increment(-0.004);
+                    // 逆方向に回転（開始位置に戻る）- ゆっくり
+                    self.shaft_position_req.increment(-0.002);
 
                     let electrical_angle =
                         self.shaft_position_req.get_angle() * self.pole_pairs as f32;

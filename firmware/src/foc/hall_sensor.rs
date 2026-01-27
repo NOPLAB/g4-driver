@@ -2,9 +2,12 @@
 // Uses TIM4 hardware Hall interface for high-precision edge detection and speed calculation
 // Implements foc-simple compatible mechanical angle based calculation
 
+use crate::config::advance_angle::{
+    BASE_ADVANCE_DEG, MAX_ADVANCE_DEG, MAX_SPEED_FOR_ADVANCE, MIN_SPEED_FOR_ADVANCE,
+};
 use crate::fmt::*;
 use crate::hall_tim;
-use core::f32::consts::TAU;
+use core::f32::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
 
 /// Hall state lookup table (foc-simple compatible)
 /// Maps raw hall state (1-6) to normalized index (0-5)
@@ -21,6 +24,32 @@ const HALL_STATE_TABLE: [u8; 8] = [
     3,   // 0b110: State 6 -> index 3
     255, // 0b111: Invalid state (use 255 as marker)
 ];
+
+/// Hall状態から直接電気角を取得するテーブル（ラジアン）
+/// 6ステップ駆動の各Hall状態の中心電気角 + 180°（逆回転補正）
+///
+/// Hall駆動パターン（中心電気角 + 180°）:
+///   Hall 1: 30° + 180° = 210° = 3.665 rad
+///   Hall 3: 90° + 180° = 270° = 4.712 rad
+///   Hall 2: 150° + 180° = 330° = 5.760 rad
+///   Hall 6: 210° + 180° = 390° = 30° = 0.524 rad
+///   Hall 4: 270° + 180° = 450° = 90° = 1.571 rad
+///   Hall 5: 330° + 180° = 510° = 150° = 2.618 rad
+const HALL_TO_ELECTRICAL_ANGLE: [f32; 8] = [
+    0.0,              // 0b000: Invalid
+    7.0 * FRAC_PI_6,  // 0b001: Hall 1 → 210° = 7π/6
+    11.0 * FRAC_PI_6, // 0b010: Hall 2 → 330° = 11π/6
+    3.0 * FRAC_PI_2,  // 0b011: Hall 3 → 270° = 3π/2
+    FRAC_PI_2,        // 0b100: Hall 4 → 90° = π/2
+    5.0 * FRAC_PI_6,  // 0b101: Hall 5 → 150° = 5π/6
+    FRAC_PI_6,        // 0b110: Hall 6 → 30° = π/6
+    0.0,              // 0b111: Invalid
+];
+
+/// 機械角から電気角への変換時の初期オフセット
+/// Hall状態1（normalized_state=0）の電気角が210°になるように調整
+/// テーブル値: 210° - 機械角ベース値: 0° = 210° = 7π/6
+const MECHANICAL_TO_ELECTRICAL_OFFSET: f32 = 7.0 * PI / 6.0; // 210° = 3.665 rad
 
 /// Hall sensor state machine for position and speed estimation
 /// Implements foc-simple compatible mechanical angle based calculation
@@ -49,6 +78,8 @@ pub struct HallSensor {
     enable_interpolation: bool,
     /// Electrical offset in radians (calibration value)
     electrical_offset: f32,
+    /// Enable advance angle for improved efficiency
+    enable_advance_angle: bool,
 }
 
 impl HallSensor {
@@ -73,6 +104,7 @@ impl HallSensor {
             pole_pairs,
             enable_interpolation: true, // Enable angle interpolation by default
             electrical_offset: 0.0,
+            enable_advance_angle: true, // Enable advance angle for improved efficiency
         }
     }
 
@@ -100,21 +132,8 @@ impl HallSensor {
         // Get Hall state from TIM4 interrupt handler (captured on edge)
         let raw_hall_state = hall_tim::get_hall_state();
 
-        // Validate hall state (throttle error logging to avoid flooding)
+        // Validate hall state
         if !Self::is_valid_state(raw_hall_state) {
-            static mut ERROR_LOG_COUNTER: u32 = 0;
-            unsafe {
-                ERROR_LOG_COUNTER += 1;
-                // Log error only once every 2500 calls (1 second at 2.5kHz)
-                if ERROR_LOG_COUNTER >= 2500 {
-                    ERROR_LOG_COUNTER = 0;
-                    error!(
-                        "Invalid hall state: {} (repeated, throttling log)",
-                        raw_hall_state
-                    );
-                }
-            }
-
             // Check timeout from TIM4
             if hall_tim::is_timeout() {
                 self.speed_rpm = 0.0;
@@ -159,8 +178,9 @@ impl HallSensor {
         // Get period from TIM4 and calculate instant speed
         let period_cycles = hall_tim::get_period_cycles();
 
-        // Check for timeout
-        if hall_tim::is_timeout() || period_cycles == 0 {
+        // Check for timeout (1秒以上Hallエッジがない場合のみ速度を0に)
+        // period_cycles == 0 の場合は前回の速度を維持（一時的なノイズ対策）
+        if hall_tim::is_timeout() {
             self.speed_rpm = 0.0;
             self.time_since_edge = 0.0;
 
@@ -185,6 +205,53 @@ impl HallSensor {
                 electrical_angle += TAU;
             }
 
+            return (electrical_angle, self.speed_rpm);
+        }
+
+        // period_cycles が 0 の場合は前回の速度を維持して継続
+        // 補間も継続して適用
+        if period_cycles == 0 {
+            self.time_since_edge += dt;
+
+            // 機械角の補間を適用
+            let hall_state_idx = self.hall_idx_base + (normalized_state as u32);
+            let base_mechanical_angle = (hall_state_idx as f32) * self.angle_per_state;
+
+            if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
+                let mechanical_omega = self.speed_rpm * (TAU / 60.0);
+                let angle_increment = mechanical_omega * self.time_since_edge;
+                self.mechanical_angle = base_mechanical_angle + angle_increment;
+            } else {
+                self.mechanical_angle = base_mechanical_angle;
+            }
+
+            // Normalize mechanical angle
+            while self.mechanical_angle >= TAU {
+                self.mechanical_angle -= TAU;
+            }
+
+            // 電気角計算（補間ベース）
+            let base_electrical_angle = if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
+                self.mechanical_angle * (self.pole_pairs as f32) + MECHANICAL_TO_ELECTRICAL_OFFSET
+            } else {
+                HALL_TO_ELECTRICAL_ANGLE[raw_hall_state as usize]
+            };
+
+            let mut electrical_angle = base_electrical_angle + self.electrical_offset;
+
+            // 進角を適用
+            if self.enable_advance_angle && self.speed_rpm > MIN_SPEED_FOR_ADVANCE {
+                let advance_rad = self.calculate_advance_angle(self.speed_rpm);
+                electrical_angle += advance_rad;
+            }
+
+            // Normalize
+            while electrical_angle >= TAU {
+                electrical_angle -= TAU;
+            }
+            while electrical_angle < 0.0 {
+                electrical_angle += TAU;
+            }
             return (electrical_angle, self.speed_rpm);
         }
 
@@ -214,8 +281,11 @@ impl HallSensor {
 
             // Apply low-pass filter to speed (foc-simple formula: new = (instant + 19*old)/20 for alpha=0.05)
             // Equivalent to: new = alpha*instant + (1-alpha)*old where alpha = 1/20 = 0.05
-            self.speed_rpm = self.speed_filter_alpha * instant_rpm
-                + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
+            // instant_rpm が 0 の場合はノイズ判定なので速度を更新しない
+            if instant_rpm > 0.0 {
+                self.speed_rpm = self.speed_filter_alpha * instant_rpm
+                    + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
+            }
 
             trace!(
                 "Hall edge: {} -> {} (normalized: {} -> {}), period={} cycles, instant_rpm={}, filtered_rpm={}",
@@ -237,9 +307,16 @@ impl HallSensor {
             // Accumulate time since last edge
             self.time_since_edge += dt;
 
-            // Update filtered speed even without edge (for smoother response)
-            self.speed_rpm = self.speed_filter_alpha * instant_rpm
-                + (1.0 - self.speed_filter_alpha) * self.speed_rpm;
+            // 初回（prev_state == 255）の場合は prev_state を初期化
+            // これにより次回から状態変化が検出されるようになる
+            if self.prev_state == 255 {
+                self.prev_state = normalized_state;
+                // 初回は速度フィルタも初期化
+                if instant_rpm > 0.0 {
+                    self.speed_rpm = instant_rpm;
+                }
+            }
+            // 状態変化がない場合は速度を更新しない（ノイズ混入防止）
         }
 
         // Calculate mechanical angle from hall index (foc-simple method)
@@ -267,9 +344,25 @@ impl HallSensor {
             self.mechanical_angle += TAU;
         }
 
-        // Calculate electrical angle: mechanical_angle * pole_pairs - offset (foc-simple formula)
-        let mut electrical_angle =
-            self.mechanical_angle * (self.pole_pairs as f32) - self.electrical_offset;
+        // 電気角計算: 補間された機械角から計算（テーブル参照方式から変更）
+        // 補間が有効でモーターが回転している場合は、機械角ベースの連続的な電気角を使用
+        let base_electrical_angle = if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
+            // 補間された機械角から電気角を計算 + 初期オフセット（テーブルとの整合性）
+            self.mechanical_angle * (self.pole_pairs as f32) + MECHANICAL_TO_ELECTRICAL_OFFSET
+        } else {
+            // 低速時または補間無効時はHallテーブルから離散的な電気角を使用
+            HALL_TO_ELECTRICAL_ANGLE[raw_hall_state as usize]
+        };
+
+        // オフセットを加算（キャリブレーション値）
+        let mut electrical_angle = base_electrical_angle + self.electrical_offset;
+
+        // 進角（Advance Angle）を適用
+        // 高速回転時にトルク効率を最大化するため、電気角を進める
+        if self.enable_advance_angle && self.speed_rpm > MIN_SPEED_FOR_ADVANCE {
+            let advance_rad = self.calculate_advance_angle(self.speed_rpm);
+            electrical_angle += advance_rad;
+        }
 
         // Normalize electrical angle to [0, TAU)
         while electrical_angle >= TAU {
@@ -280,6 +373,36 @@ impl HallSensor {
         }
 
         (electrical_angle, self.speed_rpm)
+    }
+
+    /// 進角を計算（速度に応じた線形補間）
+    ///
+    /// # Arguments
+    /// * `speed_rpm` - 現在の速度 [RPM]
+    ///
+    /// # Returns
+    /// 進角 [rad]
+    fn calculate_advance_angle(&self, speed_rpm: f32) -> f32 {
+        // 度からラジアンへの変換係数
+        const DEG_TO_RAD: f32 = PI / 180.0;
+
+        // 基本進角（常に適用）
+        let base_advance_rad = BASE_ADVANCE_DEG * DEG_TO_RAD;
+
+        // 速度が閾値以下なら基本進角のみ
+        if speed_rpm <= MIN_SPEED_FOR_ADVANCE {
+            return base_advance_rad;
+        }
+
+        // 速度比例の追加進角を計算
+        let speed_ratio = ((speed_rpm - MIN_SPEED_FOR_ADVANCE)
+            / (MAX_SPEED_FOR_ADVANCE - MIN_SPEED_FOR_ADVANCE))
+            .clamp(0.0, 1.0);
+
+        let additional_advance_rad =
+            (MAX_ADVANCE_DEG - BASE_ADVANCE_DEG) * DEG_TO_RAD * speed_ratio;
+
+        base_advance_rad + additional_advance_rad
     }
 
     /// Get current electrical angle in radians
@@ -361,6 +484,31 @@ impl HallSensor {
     #[allow(dead_code)]
     pub fn get_electrical_offset(&self) -> f32 {
         self.electrical_offset
+    }
+
+    /// Enable or disable advance angle
+    ///
+    /// # Arguments
+    /// * `enable` - True to enable advance angle, false to disable
+    #[allow(dead_code)]
+    pub fn set_advance_angle(&mut self, enable: bool) {
+        self.enable_advance_angle = enable;
+    }
+
+    /// Check if advance angle is enabled
+    #[allow(dead_code)]
+    pub fn is_advance_angle_enabled(&self) -> bool {
+        self.enable_advance_angle
+    }
+
+    /// Get current advance angle in degrees for the current speed
+    #[allow(dead_code)]
+    pub fn get_current_advance_deg(&self) -> f32 {
+        if !self.enable_advance_angle || self.speed_rpm <= MIN_SPEED_FOR_ADVANCE {
+            return BASE_ADVANCE_DEG;
+        }
+        let advance_rad = self.calculate_advance_angle(self.speed_rpm);
+        advance_rad * 180.0 / PI
     }
 }
 

@@ -21,7 +21,24 @@ pub const DEFAULT_CONTROL_PERIOD_US: u64 = 400;
 pub const DEFAULT_SPEED_FILTER_ALPHA: f32 = 0.05;
 
 /// Hall角度オフセット [度]（ハードウェアに応じて調整、モーターが正しく回転しない場合は調整が必要）
+/// テーブル方式で基本電気角を設定済み。オフセットは微調整用。
 pub const DEFAULT_HALL_ANGLE_OFFSET_DEG: f32 = 0.0;
+
+/// 進角（Advance Angle）設定
+/// 高速回転時にトルク効率を最大化するため、電気角に進角を加える
+pub mod advance_angle {
+    /// 基本進角 [度]（低速時から適用される固定進角）
+    pub const BASE_ADVANCE_DEG: f32 = 10.0;
+
+    /// 最大進角 [度]（高速時の最大進角）
+    pub const MAX_ADVANCE_DEG: f32 = 30.0;
+
+    /// 進角が最大になる速度 [RPM]
+    pub const MAX_SPEED_FOR_ADVANCE: f32 = 3000.0;
+
+    /// 進角を適用し始める速度 [RPM]（これ以下では基本進角のみ）
+    pub const MIN_SPEED_FOR_ADVANCE: f32 = 100.0;
+}
 
 /// 最小出力電圧 [V]（静止摩擦を克服するための最小電圧）
 pub const MIN_VOLTAGE: f32 = 2.0;
@@ -34,17 +51,23 @@ pub const MAX_SPEED_ACCELERATION: f32 = 100.0;
 
 /// オープンループ始動パラメータ（6ステップ駆動）
 pub mod openloop {
-    /// 初期回転数 [RPM]（デバッグ用：非常に低速）
-    pub const DEFAULT_INITIAL_RPM: f32 = 10.0;
+    /// 初期回転数 [RPM]（起動用：100RPMから開始）
+    pub const DEFAULT_INITIAL_RPM: f32 = 100.0;
 
-    /// FOC切替回転数 [RPM]（デバッグ用：低速）
-    pub const DEFAULT_TARGET_RPM: f32 = 1000.0;
+    /// FOC切替回転数 [RPM]（目標速度）
+    pub const DEFAULT_TARGET_RPM: f32 = 300.0;
 
-    /// 加速度 [RPM/s]（デバッグ用：ゆっくり加速）
-    pub const DEFAULT_ACCELERATION_RPM_PER_S: f32 = 10.0;
+    /// 加速度 [RPM/s]（起動用：適度な加速）
+    pub const DEFAULT_ACCELERATION_RPM_PER_S: f32 = 200.0;
 
-    /// デューティ比 (0-100)（デバッグ用：最大トルク）
+    /// デューティ比 (0-100)（Hall ベース駆動用：10%）
     pub const DEFAULT_DUTY_RATIO: u16 = 10;
+
+    /// 強制転流フェーズの実行回数（2500 = 1秒 @ 2.5kHz）
+    pub const FORCED_COMMUTATION_CYCLES: u32 = 2500;
+
+    /// FOC切り替えまでの最小実行回数
+    pub const MIN_CYCLES_BEFORE_FOC: u32 = 2500;
 }
 
 /// PWM設定

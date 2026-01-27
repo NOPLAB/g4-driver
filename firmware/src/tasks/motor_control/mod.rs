@@ -28,15 +28,16 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
 
     // ホールセンサ初期化（foc-simple互換の機械角ベース計算）
     let mut hall_sensor = HallSensor::new(DEFAULT_POLE_PAIRS, DEFAULT_SPEED_FILTER_ALPHA);
-    hall_sensor.set_interpolation(true); // 角度補間を有効化（FOC制御の安定性向上）
+    hall_sensor.set_interpolation(false); // 角度補間を無効化（ノイズ対策）
 
     // 電気オフセットを設定（キャリブレーション値）
     let offset_rad = DEFAULT_HALL_ANGLE_OFFSET_DEG * PI / 180.0;
     hall_sensor.set_electrical_offset(offset_rad);
 
-    // 速度PIコントローラ初期化
+    // 速度PIコントローラ初期化（アンチワインドアップ有効）
     let mut speed_pi =
         PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, DEFAULT_MAX_VOLTAGE);
+    speed_pi.set_anti_windup(true);
 
     // オープンループ始動コントローラ初期化
     let mut openloop = OpenLoopSixStep::new(
@@ -74,7 +75,12 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
     // モーター有効状態の追跡（PWMチャネル制御用）
     let mut was_enabled = false;
 
+    // デバッグ用ループカウンター
+    let mut loop_counter: u32 = 0;
+
     loop {
+        loop_counter = loop_counter.wrapping_add(1);
+
         // 1. モーター使能チェック
         let motor_enabled = state::get_motor_enabled().await;
         if !motor_enabled {
@@ -90,6 +96,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
             speed_pi.reset();
             hall_sensor.reset();
             openloop.reset();
+            openloop_mode::reset_execution_counter(); // OpenLoop実行カウンタもリセット
             hall_tim::reset_state(); // TIM4の状態もリセット
             ramped_target_speed = 0.0; // 速度ランプもリセット
             control_mode = ControlMode::OpenLoop; // OpenLoopに戻す
@@ -139,13 +146,20 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                 // OpenLoopからFOCへの切り替え判定
                 if should_switch {
                     control_mode = ControlMode::ClosedLoopFoc;
-                    info!("Switching to FOC mode: Hall state valid, target speed reached");
+
+                    // 強制転流時の速度を引き継ぐ
+                    let current_rpm = openloop.get_current_rpm();
+
+                    // PI制御をリセット（クリーンな状態からスタート）
+                    speed_pi.reset();
 
                     // Hall センサーの速度フィルタを現在の速度で初期化
-                    let current_rpm = openloop.get_current_rpm();
                     hall_sensor.reset_speed_filter(current_rpm);
+
+                    // ランプも現在の速度からスタート（急激な変化を防ぐ）
                     ramped_target_speed = current_rpm;
-                    info!("FOC mode initialized with speed: {} RPM", current_rpm);
+
+                    info!("Switching to FOC mode: speed={} RPM", current_rpm);
                 }
             }
 

@@ -8,14 +8,13 @@ use embassy_stm32::{
     flash::{Blocking, Flash},
 };
 use embassy_time::{Duration, Ticker};
-use embedded_can::{Id, StandardId};
+use embedded_can::Id;
 
 use crate::can_protocol::{
-    can_ids, encode_calibration_status, encode_config_status, encode_status, encode_voltage_status,
-    parse_angle_interpolation, parse_can_config, parse_control_timing, parse_enable_command,
-    parse_hall_sensor_params, parse_motor_basic_params, parse_motor_voltage_params,
-    parse_openloop_accel_duty_params, parse_openloop_rpm_params, parse_pi_gains, parse_pwm_config,
-    parse_speed_command,
+    can_ids, parse_angle_interpolation, parse_can_config, parse_control_timing,
+    parse_enable_command, parse_hall_sensor_params, parse_motor_basic_params,
+    parse_motor_voltage_params, parse_openloop_accel_duty_params, parse_openloop_rpm_params,
+    parse_pi_gains, parse_pwm_config, parse_speed_command,
 };
 use crate::config;
 use crate::fmt::*;
@@ -28,7 +27,7 @@ pub async fn can_task(
     mut flash: Flash<'static, Blocking>,
     mut crc: Crc<'static>,
 ) {
-    let (mut tx, mut rx, _properties) = can.split();
+    let (_tx, mut rx, _properties) = can.split();
 
     info!("CAN motor control task started");
 
@@ -245,61 +244,8 @@ pub async fn can_task(
                 }
             },
             async {
-                // ステータス送信（100ms周期）
+                // ステータス送信（100ms周期）- 現在は無効化
                 status_ticker.next().await;
-
-                // モーターステータス送信 (ID 0x200)
-                let status = state::get_motor_status().await;
-                let data = encode_status(status.speed_rpm, status.electrical_angle);
-
-                if let Some(std_id) = StandardId::new(can_ids::STATUS as u16) {
-                    let id = Id::Standard(std_id);
-                    if let Ok(frame) = can::frame::Frame::new_data(id, &data) {
-                        let _ = tx.write(&frame).await;
-                    }
-                }
-
-                // 電圧ステータス送信 (ID 0x201)
-                let voltage_state = state::get_voltage_state().await;
-                let voltage_data = encode_voltage_status(
-                    voltage_state.voltage,
-                    voltage_state.overvoltage,
-                    voltage_state.undervoltage,
-                );
-
-                if let Some(std_id) = StandardId::new(can_ids::VOLTAGE_STATUS as u16) {
-                    let id = Id::Standard(std_id);
-                    if let Ok(frame) = can::frame::Frame::new_data(id, &voltage_data) {
-                        let _ = tx.write(&frame).await;
-                    }
-                }
-
-                // 設定ステータス送信 (ID 0x202)
-                let version = state::get_config_version().await;
-                let crc_valid = state::get_config_crc_valid().await;
-                let config_data = encode_config_status(version, crc_valid);
-
-                if let Some(std_id) = StandardId::new(can_ids::CONFIG_STATUS as u16) {
-                    let id = Id::Standard(std_id);
-                    if let Ok(frame) = can::frame::Frame::new_data(id, &config_data) {
-                        let _ = tx.write(&frame).await;
-                    }
-                }
-
-                // キャリブレーションステータス送信 (ID 0x203)
-                let calib_result = state::get_calibration_result().await;
-                let calib_data = encode_calibration_status(
-                    calib_result.electrical_offset,
-                    calib_result.direction_inversed,
-                    calib_result.success,
-                );
-
-                if let Some(std_id) = StandardId::new(can_ids::CALIBRATION_STATUS as u16) {
-                    let id = Id::Standard(std_id);
-                    if let Ok(frame) = can::frame::Frame::new_data(id, &calib_data) {
-                        let _ = tx.write(&frame).await;
-                    }
-                }
             },
         )
         .await;
