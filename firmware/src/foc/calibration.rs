@@ -191,8 +191,8 @@ impl MotorCalibration {
                     info!("Calibration: FindDirection -> MeasureSectors");
                 } else {
                     // ゆっくり回転（2.5 rad/s ≈ 24 RPM）- ゆっくり
-                    // 2.5kHz更新なので、1ステップあたり: 2.5 / 2500 = 0.001 rad
-                    self.shaft_position_req.increment(0.001);
+                    // 10kHz更新なので、1ステップあたり: 2.5 / 10000 = 0.00025 rad
+                    self.shaft_position_req.increment(0.00025);
                 }
 
                 // 要求位置の電気角を返す（オフセット未適用）
@@ -218,8 +218,8 @@ impl MotorCalibration {
 
                     let sector_idx = current_hall as usize;
 
-                    // 角度安定化のため待機（125サイクル = 50ms @ 2.5kHz）
-                    if self.sector_wait_counter < 125 {
+                    // 角度安定化のため待機（500サイクル = 50ms @ 10kHz）
+                    if self.sector_wait_counter < 500 {
                         self.sector_wait_counter += 1;
                     } else if self.sector_sample_count[sector_idx] < SAMPLES_PER_SECTOR {
                         // サンプリング中：角度を蓄積

@@ -13,7 +13,7 @@ use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
 
-/// オープンループログカウンタ（1Hz = 2500サイクルごと）
+/// オープンループログカウンタ（1Hz = 10000サイクルごと @ 10kHz）
 static OPENLOOP_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// OpenLoop実行カウンタ（FOCへの切り替え判定用）
@@ -131,9 +131,9 @@ pub async fn execute(
     // ステータス更新（Atomic変数でロックフリー）
     state::update_motor_status_atomic(openloop.get_current_rpm(), 0.0);
 
-    // デバッグログ（1秒ごと）
+    // デバッグログ（1秒ごと @ 10kHz）
     let count = OPENLOOP_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if count >= 2500 {
+    if count >= 10000 {
         OPENLOOP_LOG_COUNTER.store(0, Ordering::Relaxed);
         info!(
             "[{}] Hall:{}, Duty:{}/{}/{}, En:{}/{}/{}, Cycle:{}",

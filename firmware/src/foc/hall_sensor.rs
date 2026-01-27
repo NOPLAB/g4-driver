@@ -139,8 +139,9 @@ impl HallSensor {
     /// * `dt` - Time step since last update (seconds) - used for angle interpolation
     ///
     /// # Returns
-    /// Tuple of (electrical_angle in radians, speed in RPM)
-    pub fn update(&mut self, dt: f32) -> (f32, f32) {
+    /// Tuple of (electrical_angle in radians, speed in RPM, raw_hall_state)
+    /// raw_hall_state is included to avoid re-reading Hall state after this call
+    pub fn update(&mut self, dt: f32) -> (f32, f32, u8) {
         // Get Hall state and period from TIM4 (read once for consistency)
         let raw_hall_state = hall_tim::get_hall_state();
         let period_cycles = hall_tim::get_period_cycles();
@@ -165,7 +166,7 @@ impl HallSensor {
                     + self.electrical_offset,
             );
 
-            return (electrical_angle, self.speed_rpm);
+            return (electrical_angle, self.speed_rpm, raw_hall_state);
         }
 
         // Convert raw hall state to normalized index using lookup table (foc-simple compatible)
@@ -178,7 +179,7 @@ impl HallSensor {
                     + self.electrical_offset,
             );
 
-            return (electrical_angle, self.speed_rpm);
+            return (electrical_angle, self.speed_rpm, raw_hall_state);
         }
 
         // Check for timeout (1秒以上Hallエッジがない場合のみ速度を0に)
@@ -199,7 +200,7 @@ impl HallSensor {
                     + self.electrical_offset,
             );
 
-            return (electrical_angle, self.speed_rpm);
+            return (electrical_angle, self.speed_rpm, raw_hall_state);
         }
 
         // period_cycles が 0 の場合は前回の速度を維持して継続
@@ -233,7 +234,11 @@ impl HallSensor {
                 electrical_angle += self.calculate_advance_angle(self.speed_rpm);
             }
 
-            return (normalize_angle(electrical_angle), self.speed_rpm);
+            return (
+                normalize_angle(electrical_angle),
+                self.speed_rpm,
+                raw_hall_state,
+            );
         }
 
         // Calculate instant speed from TIM4 period
@@ -336,7 +341,11 @@ impl HallSensor {
             electrical_angle += self.calculate_advance_angle(self.speed_rpm);
         }
 
-        (normalize_angle(electrical_angle), self.speed_rpm)
+        (
+            normalize_angle(electrical_angle),
+            self.speed_rpm,
+            raw_hall_state,
+        )
     }
 
     /// 進角を計算（速度に応じた線形補間）

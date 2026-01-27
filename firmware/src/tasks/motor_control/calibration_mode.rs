@@ -11,7 +11,7 @@ use crate::foc::{calculate_svpwm, inverse_park, ControlMode, HallSensor, MotorCa
 use crate::motor_driver::MotorDriver;
 use crate::state;
 
-/// キャリブレーションデバッグログカウンタ（1Hz = 2500サイクルごと）
+/// キャリブレーションデバッグログカウンタ（1Hz = 10000サイクルごと @ 10kHz）
 static DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// キャリブレーション制御の実行
@@ -31,12 +31,12 @@ pub async fn execute(
     dt: f32,
 ) -> Option<ControlMode> {
     // Hall センサーを更新して現在の角度を取得
-    let (_electrical_angle, _speed_rpm) = hall_sensor.update(dt);
+    let (_electrical_angle, _speed_rpm, _hall_state) = hall_sensor.update(dt);
     let sensor_angle = hall_sensor.get_mechanical_angle();
 
-    // デバッグ：Hall状態と角度を定期的にログ出力（2500サイクルごと = 1秒）
+    // デバッグ：Hall状態と角度を定期的にログ出力（10000サイクルごと = 1秒 @ 10kHz）
     let count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if count >= 2500 {
+    if count >= 10000 {
         DEBUG_COUNTER.store(0, Ordering::Relaxed);
         let hall_state = crate::hall_tim::get_hall_state();
         info!(

@@ -11,11 +11,18 @@ use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
 
-/// FOC詳細ログカウンタ（10Hz = 500サイクルごと @ 5kHz）
+/// FOC詳細ログカウンタ（10Hz = 1000サイクルごと @ 10kHz）
 static FOC_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// FOCモードログカウンタ（1Hz = 5000サイクルごと @ 5kHz）
+/// FOCモードログカウンタ（1Hz = 10000サイクルごと @ 10kHz）
 static FOC_MODE_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// 無効Hall状態の連続カウンタ（一時的なノイズでPIリセットしないため）
+static INVALID_HALL_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// PIリセットまでの無効Hall状態の連続回数閾値
+/// 10kHz制御で20回 = 2ms以上連続して無効な場合のみリセット
+const INVALID_HALL_THRESHOLD: u32 = 20;
 
 /// FOC制御の実行
 ///
@@ -35,28 +42,44 @@ pub async fn execute(
     ramped_target_speed: &mut f32,
     dt: f32,
 ) -> bool {
-    // 電気角と速度を取得（TIM4ハードウェアベース、foc-simple互換計算）
-    // hall_sensor.update() 内で Hall 状態の検証も行われる
-    let (hall_electrical_angle, speed_rpm) = hall_sensor.update(dt);
-
-    // Hall状態の確認（hall_sensor.update() と同じ値を使用するため再取得）
-    let hall_state = hall_tim::get_hall_state();
+    // 電気角と速度とHall状態を取得（TIM4ハードウェアベース、foc-simple互換計算）
+    // Hall状態は1回だけ読み取り、再取得による競合を防止
+    let (hall_electrical_angle, speed_rpm, hall_state) = hall_sensor.update(dt);
     let is_valid_hall = (1..=6).contains(&hall_state);
 
     // Hallセンサが無効な場合の処理
+    // 注意: 一時的なノイズ（1-2サイクル）ではPIリセットしない
     // 注意: ramped_target_speed はリセットしない（一時的なノイズで完全停止しないように）
-    // 注意: speed_rpm は hall_sensor.update() で取得済みなので、前回値が維持されている
     if !is_valid_hall {
-        // PWMを50%（中立）に設定するが、完全停止はしない
-        motor_driver.set_duty_uvw(
-            motor_driver.max_duty() / 2,
-            motor_driver.max_duty() / 2,
-            motor_driver.max_duty() / 2,
-        );
-        // PI積分項のみリセット（急激な応答を防ぐ）
-        speed_pi.reset();
+        // 無効状態カウンタをインクリメント
+        let invalid_count = INVALID_HALL_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+
+        // 連続して無効な場合のみPWMを中立に設定
+        if invalid_count >= INVALID_HALL_THRESHOLD {
+            // 長時間無効: PWMを中立に設定し、PI積分項をリセット
+            motor_driver.set_duty_uvw(
+                motor_driver.max_duty() / 2,
+                motor_driver.max_duty() / 2,
+                motor_driver.max_duty() / 2,
+            );
+            speed_pi.reset();
+
+            // 警告ログ（初回のみ）
+            if invalid_count == INVALID_HALL_THRESHOLD {
+                warn!(
+                    "[FOC] Invalid Hall state persisted for {}+ cycles, PWM neutralized",
+                    INVALID_HALL_THRESHOLD
+                );
+            }
+        }
+        // 一時的な無効状態: PWMは前回値を維持（何もしない）
+        // これにより、Hall遷移中の一時的な無効状態でモーターが停止しない
+
         return false;
     }
+
+    // 有効なHall状態: 無効カウンタをリセット
+    INVALID_HALL_COUNTER.store(0, Ordering::Relaxed);
 
     // FOC入力パラメータを一括取得（1回のMutexロックで統合）
     let foc_params = state::get_foc_input_params().await;
@@ -120,9 +143,9 @@ pub async fn execute(
     let pwm_max_duty = motor_driver.max_duty();
     let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, pwm_max_duty);
 
-    // デバッグ用：FOC制御の詳細ログ（10Hz = 500回に1回 @ 5kHz）
+    // デバッグ用：FOC制御の詳細ログ（10Hz = 1000回に1回 @ 10kHz）
     let count = FOC_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if count >= 500 {
+    if count >= 1000 {
         FOC_LOG_COUNTER.store(0, Ordering::Relaxed);
         let angle_deg = hall_electrical_angle * 180.0 / core::f32::consts::PI;
         let advance_deg = hall_sensor.get_current_advance_deg();
@@ -143,8 +166,8 @@ pub async fn execute(
 
     // デバッグログ（低頻度）- ローカル変数を再利用してMutexロックを回避
     let mode_count = FOC_MODE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if mode_count >= 5000 {
-        // 1秒ごと（5kHz / 5000 = 1Hz）
+    if mode_count >= 10000 {
+        // 1秒ごと（10kHz / 10000 = 1Hz）
         FOC_MODE_LOG_COUNTER.store(0, Ordering::Relaxed);
 
         // TIM4ベースのHallセンサ値を取得（ログ用）
