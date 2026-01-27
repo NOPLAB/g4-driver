@@ -2,11 +2,16 @@
 //!
 //! 始動時に6ステップ駆動（台形波）でモーターを回転させます。
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::fmt::*;
 use crate::foc::{HallSensor, OpenLoopSixStep};
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
-use crate::state::MOTOR_STATUS;
+use crate::state;
+
+/// オープンループログカウンタ（1Hz = 2500サイクルごと）
+static OPENLOOP_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// オープンループ制御の実行
 ///
@@ -49,27 +54,24 @@ pub async fn execute(
 
     // ステータス更新
     {
-        let mut status = MOTOR_STATUS.lock().await;
-        status.speed_rpm = openloop.get_current_rpm();
-        status.electrical_angle = 0.0; // OpenLoopでは電気角は不定
+        let mut ctx = state::MOTOR_CONTEXT.lock().await;
+        ctx.status.speed_rpm = openloop.get_current_rpm();
+        ctx.status.electrical_angle = 0.0; // OpenLoopでは電気角は不定
     }
 
     // デバッグログ（低頻度）
-    static mut OPENLOOP_LOG_COUNTER: u32 = 0;
-    unsafe {
-        OPENLOOP_LOG_COUNTER += 1;
-        if OPENLOOP_LOG_COUNTER >= 2500 {
-            OPENLOOP_LOG_COUNTER = 0;
-            debug!(
-                "[OpenLoop] Step: {}, RPM: {}, Hall: {}, DutyU/V/W: {}/{}/{}",
-                step_state.step,
-                openloop.get_current_rpm(),
-                hall_state,
-                step_state.duty_u,
-                step_state.duty_v,
-                step_state.duty_w
-            );
-        }
+    let count = OPENLOOP_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if count >= 2500 {
+        OPENLOOP_LOG_COUNTER.store(0, Ordering::Relaxed);
+        debug!(
+            "[OpenLoop] Step: {}, RPM: {}, Hall: {}, DutyU/V/W: {}/{}/{}",
+            step_state.step,
+            openloop.get_current_rpm(),
+            hall_state,
+            step_state.duty_u,
+            step_state.duty_v,
+            step_state.duty_w
+        );
     }
 
     (is_valid_hall && target_reached, hall_state)

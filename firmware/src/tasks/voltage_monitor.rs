@@ -6,7 +6,7 @@ use embassy_stm32::{adc::Adc, peripherals};
 use embassy_time::{Duration, Ticker};
 
 use crate::fmt::*;
-use crate::state::{MOTOR_ENABLE, TARGET_SPEED, VOLTAGE_STATE};
+use crate::state;
 use crate::voltage_monitor::{VoltageMonitor, VoltageMonitorConfig};
 
 /// 電圧監視タスク - DCバス電圧を監視し、過電圧/低電圧を検出
@@ -60,18 +60,17 @@ pub async fn voltage_monitor_task(
         let state = monitor.update(adc_raw);
 
         // グローバル状態を更新（CAN送信用）
-        *VOLTAGE_STATE.lock().await = state;
+        state::set_voltage_state(state).await;
 
         // 過電圧/低電圧時はモーターを自動停止
         if !state.is_voltage_ok() {
-            let was_enabled = *MOTOR_ENABLE.lock().await;
+            let was_enabled = state::get_motor_enabled().await;
             if was_enabled {
                 error!(
                     "Voltage fault detected! Disabling motor. Voltage: {}V, OV: {}, UV: {}",
                     state.voltage, state.overvoltage, state.undervoltage
                 );
-                *MOTOR_ENABLE.lock().await = false;
-                *TARGET_SPEED.lock().await = 0.0;
+                state::emergency_stop().await;
             }
         }
 

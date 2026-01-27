@@ -3,12 +3,16 @@
 //! モーターの電気角オフセットと回転方向を自動検出します。
 
 use core::f32::consts::PI;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::*;
 use crate::fmt::*;
 use crate::foc::{calculate_svpwm, inverse_park, ControlMode, HallSensor, MotorCalibration};
 use crate::motor_driver::MotorDriver;
-use crate::state::{CALIBRATION_RESULT, CONTROL_MODE};
+use crate::state;
+
+/// キャリブレーションデバッグログカウンタ（1Hz = 2500サイクルごと）
+static DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// キャリブレーション制御の実行
 ///
@@ -31,19 +35,16 @@ pub async fn execute(
     let sensor_angle = hall_sensor.get_mechanical_angle();
 
     // デバッグ：Hall状態と角度を定期的にログ出力（2500サイクルごと = 1秒）
-    static mut DEBUG_COUNTER: u32 = 0;
-    unsafe {
-        DEBUG_COUNTER += 1;
-        if DEBUG_COUNTER >= 2500 {
-            DEBUG_COUNTER = 0;
-            let hall_state = crate::hall_tim::get_hall_state();
-            info!(
-                "[Calibration Execute] Hall state={}, sensor_angle={} rad ({} deg)",
-                hall_state,
-                sensor_angle,
-                sensor_angle * 180.0 / PI
-            );
-        }
+    let count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if count >= 2500 {
+        DEBUG_COUNTER.store(0, Ordering::Relaxed);
+        let hall_state = crate::hall_tim::get_hall_state();
+        info!(
+            "[Calibration Execute] Hall state={}, sensor_angle={} rad ({} deg)",
+            hall_state,
+            sensor_angle,
+            sensor_angle * 180.0 / PI
+        );
     }
 
     // キャリブレーションステートマシンを更新
@@ -84,18 +85,14 @@ pub async fn execute(
                     info!("  Direction inversed: {}", result.direction_inversed);
 
                     // 結果をグローバル状態に保存
-                    {
-                        let mut saved_result = CALIBRATION_RESULT.lock().await;
-                        *saved_result = result;
-                    }
+                    state::set_calibration_result(result).await;
 
                     // Hall センサーに結果を適用
                     hall_sensor.set_electrical_offset(result.electrical_offset);
                     // TODO: 方向反転の適用（HallSensor に direction_inversed を追加する必要がある）
 
                     // ClosedLoopFocモードに切り替え
-                    let mut mode = CONTROL_MODE.lock().await;
-                    *mode = ControlMode::ClosedLoopFoc;
+                    state::set_control_mode(ControlMode::ClosedLoopFoc).await;
 
                     info!("Switching to ClosedLoopFoc mode");
                     return Some(ControlMode::ClosedLoopFoc);
@@ -105,8 +102,7 @@ pub async fn execute(
                     motor_driver.stop();
 
                     // OpenLoopモードに戻る
-                    let mut mode = CONTROL_MODE.lock().await;
-                    *mode = ControlMode::OpenLoop;
+                    state::set_control_mode(ControlMode::OpenLoop).await;
 
                     return Some(ControlMode::OpenLoop);
                 }
@@ -118,8 +114,7 @@ pub async fn execute(
             motor_driver.stop();
 
             // OpenLoopモードに戻る
-            let mut mode = CONTROL_MODE.lock().await;
-            *mode = ControlMode::OpenLoop;
+            state::set_control_mode(ControlMode::OpenLoop).await;
 
             return Some(ControlMode::OpenLoop);
         }

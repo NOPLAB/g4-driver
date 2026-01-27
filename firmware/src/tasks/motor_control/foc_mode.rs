@@ -2,12 +2,20 @@
 //!
 //! Hallセンサーベースのクローズドループ速度制御を実行します。
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::config::*;
 use crate::fmt::*;
 use crate::foc::{calculate_svpwm, inverse_park, limit_voltage, HallSensor, PiController};
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
-use crate::state::{MOTOR_STATUS, SPEED_PI_GAINS, TARGET_SPEED};
+use crate::state;
+
+/// FOC詳細ログカウンタ（10Hz = 250サイクルごと）
+static FOC_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// FOCモードログカウンタ（1Hz = 2500サイクルごと）
+static FOC_MODE_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// FOC制御の実行
 ///
@@ -44,7 +52,7 @@ pub async fn execute(
 
     // PIゲイン更新チェック（非同期で更新された場合）
     {
-        let (kp, ki) = *SPEED_PI_GAINS.lock().await;
+        let (kp, ki) = state::get_pi_gains().await;
         if kp != speed_pi.get_kp() || ki != speed_pi.get_ki() {
             speed_pi.set_gains(kp, ki);
             info!("PI gains updated: Kp={}, Ki={}", kp, ki);
@@ -52,7 +60,7 @@ pub async fn execute(
     }
 
     // 目標速度取得
-    let target_speed = *TARGET_SPEED.lock().await;
+    let target_speed = state::get_target_speed().await;
 
     // 速度ランプ（加速度制限）を適用
     let speed_error = target_speed - *ramped_target_speed;
@@ -102,17 +110,14 @@ pub async fn execute(
     let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, pwm_max_duty);
 
     // デバッグ用：FOC制御の詳細ログ（10Hz = 250回に1回）
-    static mut FOC_LOG_COUNTER: u32 = 0;
-    unsafe {
-        FOC_LOG_COUNTER += 1;
-        if FOC_LOG_COUNTER >= 250 {
-            FOC_LOG_COUNTER = 0;
-            let angle_deg = hall_electrical_angle * 180.0 / core::f32::consts::PI;
-            trace!(
-                "[FOC Detail] Hall={}, Angle={}rad ({}°), Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}",
-                hall_state, hall_electrical_angle, angle_deg, vq_limited, v_alpha, v_beta, duty_u, duty_v, duty_w
-            );
-        }
+    let count = FOC_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if count >= 250 {
+        FOC_LOG_COUNTER.store(0, Ordering::Relaxed);
+        let angle_deg = hall_electrical_angle * 180.0 / core::f32::consts::PI;
+        trace!(
+            "[FOC Detail] Hall={}, Angle={}rad ({}°), Vq={}V, Valpha={}V, Vbeta={}V, DutyU={}, DutyV={}, DutyW={}",
+            hall_state, hall_electrical_angle, angle_deg, vq_limited, v_alpha, v_beta, duty_u, duty_v, duty_w
+        );
     }
 
     // PWM出力
@@ -123,35 +128,32 @@ pub async fn execute(
 
     // ステータス更新
     {
-        let mut status = MOTOR_STATUS.lock().await;
-        status.speed_rpm = speed_rpm;
-        status.electrical_angle = hall_electrical_angle;
+        let mut ctx = state::MOTOR_CONTEXT.lock().await;
+        ctx.status.speed_rpm = speed_rpm;
+        ctx.status.electrical_angle = hall_electrical_angle;
     }
 
     // デバッグログ（低頻度）
-    static mut FOC_MODE_LOG_COUNTER: u32 = 0;
-    unsafe {
-        FOC_MODE_LOG_COUNTER += 1;
-        if FOC_MODE_LOG_COUNTER >= 2500 {
-            // 1秒ごと（2.5kHz / 2500 = 1Hz）
-            FOC_MODE_LOG_COUNTER = 0;
+    let mode_count = FOC_MODE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if mode_count >= 2500 {
+        // 1秒ごと（2.5kHz / 2500 = 1Hz）
+        FOC_MODE_LOG_COUNTER.store(0, Ordering::Relaxed);
 
-            // TIM4ベースのHallセンサ値を取得（ログ用）
-            let period_cycles = hall_tim::get_period_cycles();
+        // TIM4ベースのHallセンサ値を取得（ログ用）
+        let period_cycles = hall_tim::get_period_cycles();
 
-            // 最新のステータスを取得
-            let status = *MOTOR_STATUS.lock().await;
-            let target_speed = *TARGET_SPEED.lock().await;
-            debug!(
-                "[FOC] Speed: {}/{} RPM (ramped: {}), Angle: {}rad, Hall: {}, Period: {} cycles",
-                status.speed_rpm,
-                target_speed,
-                *ramped_target_speed,
-                status.electrical_angle,
-                hall_state,
-                period_cycles
-            );
-        }
+        // 最新のステータスを取得
+        let status = state::get_motor_status().await;
+        let target_speed = state::get_target_speed().await;
+        debug!(
+            "[FOC] Speed: {}/{} RPM (ramped: {}), Angle: {}rad, Hall: {}, Period: {} cycles",
+            status.speed_rpm,
+            target_speed,
+            *ramped_target_speed,
+            status.electrical_angle,
+            hall_state,
+            period_cycles
+        );
     }
 
     true

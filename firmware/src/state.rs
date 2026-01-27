@@ -14,7 +14,6 @@ use crate::voltage_monitor::VoltageMonitorState;
 /// モーター制御コンテキスト
 ///
 /// モーター制御に関連する全ての状態を一つの構造体にまとめます。
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct MotorContext {
     /// 目標速度 [RPM]
@@ -31,7 +30,6 @@ pub struct MotorContext {
 
 impl MotorContext {
     /// デフォルト値で新しいモーターコンテキストを作成
-    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             target_speed: 2000.0, // デバッグ用: 起動時に2000 RPM
@@ -46,7 +44,6 @@ impl MotorContext {
 /// キャリブレーションコンテキスト
 ///
 /// キャリブレーションに関連する全ての状態を一つの構造体にまとめます。
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct CalibrationContext {
     /// キャリブレーション開始フラグ
@@ -59,7 +56,6 @@ pub struct CalibrationContext {
 
 impl CalibrationContext {
     /// デフォルト値で新しいキャリブレーションコンテキストを作成
-    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             request: false,
@@ -76,7 +72,6 @@ impl CalibrationContext {
 /// システムコンテキスト
 ///
 /// システム全体の状態を一つの構造体にまとめます。
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct SystemContext {
     /// 電圧監視ステータス（CAN送信用）
@@ -91,7 +86,6 @@ pub struct SystemContext {
 
 impl SystemContext {
     /// デフォルト値で新しいシステムコンテキストを作成
-    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             voltage_state: VoltageMonitorState::new(),
@@ -103,67 +97,151 @@ impl SystemContext {
 }
 
 /// グローバルモーターコンテキスト
-#[allow(dead_code)]
 pub static MOTOR_CONTEXT: Mutex<ThreadModeRawMutex, MotorContext> = Mutex::new(MotorContext::new());
 
 /// グローバルキャリブレーションコンテキスト
-#[allow(dead_code)]
 pub static CALIBRATION_CONTEXT: Mutex<ThreadModeRawMutex, CalibrationContext> =
     Mutex::new(CalibrationContext::new());
 
 /// グローバルシステムコンテキスト
-#[allow(dead_code)]
 pub static SYSTEM_CONTEXT: Mutex<ThreadModeRawMutex, SystemContext> =
     Mutex::new(SystemContext::new());
 
 // ========================================
-// 後方互換性のための旧API
-// 段階的な移行のため、既存のAPIを維持
+// MotorContext ヘルパー関数
 // ========================================
 
-/// 目標速度 [RPM]
-/// デバッグ用: 起動時に2000 RPMに設定
-pub static TARGET_SPEED: Mutex<ThreadModeRawMutex, f32> = Mutex::new(1000.0);
+/// 目標速度を取得
+pub async fn get_target_speed() -> f32 {
+    MOTOR_CONTEXT.lock().await.target_speed
+}
 
-/// 速度PIコントローラのゲイン (Kp, Ki)
-pub static SPEED_PI_GAINS: Mutex<ThreadModeRawMutex, (f32, f32)> =
-    Mutex::new((DEFAULT_SPEED_KP, DEFAULT_SPEED_KI));
+/// 目標速度を設定
+pub async fn set_target_speed(speed: f32) {
+    MOTOR_CONTEXT.lock().await.target_speed = speed;
+}
 
-/// モーター有効/無効フラグ
-/// デバッグ用: 起動時に有効化
-pub static MOTOR_ENABLE: Mutex<ThreadModeRawMutex, bool> = Mutex::new(true);
+/// PIゲインを取得
+pub async fn get_pi_gains() -> (f32, f32) {
+    MOTOR_CONTEXT.lock().await.pi_gains
+}
 
-/// モーターステータス（CAN送信用）
-pub static MOTOR_STATUS: Mutex<ThreadModeRawMutex, MotorStatus> = Mutex::new(MotorStatus::new());
+/// PIゲインを設定
+pub async fn set_pi_gains(kp: f32, ki: f32) {
+    MOTOR_CONTEXT.lock().await.pi_gains = (kp, ki);
+}
 
-/// 電圧監視ステータス（CAN送信用）
-pub static VOLTAGE_STATE: Mutex<ThreadModeRawMutex, VoltageMonitorState> =
-    Mutex::new(VoltageMonitorState::new());
+/// モーター有効フラグを取得
+pub async fn get_motor_enabled() -> bool {
+    MOTOR_CONTEXT.lock().await.enabled
+}
 
-/// ランタイム設定（フラッシュから読み込まれた設定）
-pub static RUNTIME_CONFIG: Mutex<ThreadModeRawMutex, StoredConfig> =
-    Mutex::new(StoredConfig::default());
+/// モーター有効フラグを設定
+pub async fn set_motor_enabled(enabled: bool) {
+    MOTOR_CONTEXT.lock().await.enabled = enabled;
+}
 
-/// 設定バージョン番号（CAN送信用）
-pub static CONFIG_VERSION: Mutex<ThreadModeRawMutex, u16> = Mutex::new(0);
+/// モーターステータスを取得
+pub async fn get_motor_status() -> MotorStatus {
+    MOTOR_CONTEXT.lock().await.status
+}
 
-/// CRC検証フラグ（CAN送信用）
-pub static CONFIG_CRC_VALID: Mutex<ThreadModeRawMutex, bool> = Mutex::new(false);
+/// 制御モードを設定
+pub async fn set_control_mode(mode: ControlMode) {
+    MOTOR_CONTEXT.lock().await.control_mode = mode;
+}
 
-/// モーター制御モード（ClosedLoopFoc / Calibration等）
-pub static CONTROL_MODE: Mutex<ThreadModeRawMutex, ControlMode> =
-    Mutex::new(ControlMode::ClosedLoopFoc);
+// ========================================
+// CalibrationContext ヘルパー関数
+// ========================================
 
-/// キャリブレーション開始フラグ
-pub static CALIBRATION_REQUEST: Mutex<ThreadModeRawMutex, bool> = Mutex::new(false);
+/// キャリブレーションリクエストを取得
+pub async fn get_calibration_request() -> bool {
+    CALIBRATION_CONTEXT.lock().await.request
+}
 
-/// キャリブレーション用トルク値 (0-100)
-pub static CALIBRATION_TORQUE: Mutex<ThreadModeRawMutex, u8> = Mutex::new(10);
+/// キャリブレーションリクエストを設定
+pub async fn set_calibration_request(request: bool) {
+    CALIBRATION_CONTEXT.lock().await.request = request;
+}
 
-/// キャリブレーション結果
-pub static CALIBRATION_RESULT: Mutex<ThreadModeRawMutex, CalibrationResult> =
-    Mutex::new(CalibrationResult {
-        electrical_offset: 0.0,
-        direction_inversed: false,
-        success: false,
-    });
+/// キャリブレーショントルクを取得
+pub async fn get_calibration_torque() -> u8 {
+    CALIBRATION_CONTEXT.lock().await.torque
+}
+
+/// キャリブレーショントルクを設定
+pub async fn set_calibration_torque(torque: u8) {
+    CALIBRATION_CONTEXT.lock().await.torque = torque;
+}
+
+/// キャリブレーション結果を取得
+pub async fn get_calibration_result() -> CalibrationResult {
+    CALIBRATION_CONTEXT.lock().await.result
+}
+
+/// キャリブレーション結果を設定
+pub async fn set_calibration_result(result: CalibrationResult) {
+    CALIBRATION_CONTEXT.lock().await.result = result;
+}
+
+// ========================================
+// SystemContext ヘルパー関数
+// ========================================
+
+/// 電圧状態を取得
+pub async fn get_voltage_state() -> VoltageMonitorState {
+    SYSTEM_CONTEXT.lock().await.voltage_state
+}
+
+/// 電圧状態を設定
+pub async fn set_voltage_state(state: VoltageMonitorState) {
+    SYSTEM_CONTEXT.lock().await.voltage_state = state;
+}
+
+/// ランタイム設定を取得
+pub async fn get_runtime_config() -> StoredConfig {
+    SYSTEM_CONTEXT.lock().await.runtime_config
+}
+
+/// 設定バージョンを取得
+pub async fn get_config_version() -> u16 {
+    SYSTEM_CONTEXT.lock().await.config_version
+}
+
+/// CRC検証フラグを取得
+pub async fn get_config_crc_valid() -> bool {
+    SYSTEM_CONTEXT.lock().await.config_crc_valid
+}
+
+/// CRC検証フラグを設定
+pub async fn set_config_crc_valid(valid: bool) {
+    SYSTEM_CONTEXT.lock().await.config_crc_valid = valid;
+}
+
+// ========================================
+// 複合操作ヘルパー関数
+// ========================================
+
+/// モーターを緊急停止（有効フラグをfalseにし、目標速度を0に設定）
+pub async fn emergency_stop() {
+    let mut ctx = MOTOR_CONTEXT.lock().await;
+    ctx.enabled = false;
+    ctx.target_speed = 0.0;
+}
+
+/// システム設定を一括更新
+pub async fn update_system_config(config: StoredConfig, version: u16, crc_valid: bool) {
+    let mut ctx = SYSTEM_CONTEXT.lock().await;
+    ctx.runtime_config = config;
+    ctx.config_version = version;
+    ctx.config_crc_valid = crc_valid;
+}
+
+/// キャリブレーション結果をランタイム設定から適用
+pub async fn apply_calibration_from_config(config: &StoredConfig) {
+    let mut ctx = CALIBRATION_CONTEXT.lock().await;
+    ctx.result.electrical_offset = config.calibration_electrical_offset;
+    ctx.result.direction_inversed = config.calibration_direction_inversed;
+    ctx.result.success = config.calibration_success;
+}

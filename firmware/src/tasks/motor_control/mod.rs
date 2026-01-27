@@ -15,7 +15,7 @@ use crate::fmt::*;
 use crate::foc::{ControlMode, HallSensor, MotorCalibration, OpenLoopSixStep, PiController};
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
-use crate::state::{CALIBRATION_REQUEST, CALIBRATION_TORQUE, CONTROL_MODE, MOTOR_ENABLE};
+use crate::state;
 use core::f32::consts::PI;
 
 /// モーター制御タスク（2.5kHz FOC制御ループ）
@@ -76,7 +76,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
 
     loop {
         // 1. モーター使能チェック
-        let motor_enabled = *MOTOR_ENABLE.lock().await;
+        let motor_enabled = state::get_motor_enabled().await;
         if !motor_enabled {
             if was_enabled {
                 info!("Motor control loop: Disabling PWM channels");
@@ -107,13 +107,13 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
 
         // 2. キャリブレーションリクエストをチェック
         {
-            let mut calibration_request = CALIBRATION_REQUEST.lock().await;
-            if *calibration_request {
+            let calibration_request = state::get_calibration_request().await;
+            if calibration_request {
                 info!("Calibration requested, switching to Calibration mode");
-                *calibration_request = false; // リクエストをクリア
+                state::set_calibration_request(false).await; // リクエストをクリア
 
                 // トルク値を取得（0-100 → 0.0-1.0に変換）
-                let torque_u8 = *CALIBRATION_TORQUE.lock().await;
+                let torque_u8 = state::get_calibration_torque().await;
                 let torque_f32 = torque_u8 as f32 / 100.0;
                 info!("Starting motor calibration...");
                 info!("  Pole pairs: {}", DEFAULT_POLE_PAIRS);
@@ -124,8 +124,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                 calibration.start();
 
                 // 制御モードをグローバル状態に反映
-                let mut mode = CONTROL_MODE.lock().await;
-                *mode = ControlMode::Calibration;
+                state::set_control_mode(ControlMode::Calibration).await;
             }
         }
 
