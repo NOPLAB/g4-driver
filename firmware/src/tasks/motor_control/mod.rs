@@ -1,6 +1,6 @@
 //! モーター制御タスク
 //!
-//! 2.5kHz FOCループ + オープンループ始動制御を実行します。
+//! 5kHz FOCループ + オープンループ始動制御を実行します。
 //! 各制御モードは独立したモジュールに分離されています。
 
 mod calibration_mode;
@@ -18,7 +18,7 @@ use crate::motor_driver::MotorDriver;
 use crate::state;
 use core::f32::consts::PI;
 
-/// モーター制御タスク（2.5kHz FOC制御ループ）
+/// モーター制御タスク（5kHz FOC制御ループ）
 #[embassy_executor::task]
 pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::TIM1>) {
     info!("Motor control task started (OpenLoop + FOC mode)");

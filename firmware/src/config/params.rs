@@ -14,8 +14,8 @@ pub const DEFAULT_V_DC_BUS: f32 = 24.0;
 /// モーターの極対数（ポール数12 / 2 = 6）（デフォルト値）
 pub const DEFAULT_POLE_PAIRS: u8 = 6;
 
-/// 制御周期 [μs]（2.5kHz = 400μs）（デフォルト値）
-pub const DEFAULT_CONTROL_PERIOD_US: u64 = 400;
+/// 制御周期 [μs]（5kHz = 200μs）（デフォルト値）
+pub const DEFAULT_CONTROL_PERIOD_US: u64 = 200;
 
 /// ホールセンサ速度フィルタ係数（foc-simple互換: α=0.05でより滑らかな速度推定）（デフォルト値）
 pub const DEFAULT_SPEED_FILTER_ALPHA: f32 = 0.05;
@@ -63,11 +63,11 @@ pub mod openloop {
     /// デューティ比 (0-100)（Hall ベース駆動用：10%）
     pub const DEFAULT_DUTY_RATIO: u16 = 10;
 
-    /// 強制転流フェーズの実行回数（2500 = 1秒 @ 2.5kHz）
-    pub const FORCED_COMMUTATION_CYCLES: u32 = 2500;
+    /// 強制転流フェーズの実行回数（5000 = 1秒 @ 5kHz）
+    pub const FORCED_COMMUTATION_CYCLES: u32 = 5000;
 
     /// FOC切り替えまでの最小実行回数
-    pub const MIN_CYCLES_BEFORE_FOC: u32 = 2500;
+    pub const MIN_CYCLES_BEFORE_FOC: u32 = 5000;
 }
 
 /// PWM設定

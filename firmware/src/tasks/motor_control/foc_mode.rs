@@ -11,10 +11,10 @@ use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
 
-/// FOC詳細ログカウンタ（10Hz = 250サイクルごと）
+/// FOC詳細ログカウンタ（10Hz = 500サイクルごと @ 5kHz）
 static FOC_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// FOCモードログカウンタ（1Hz = 2500サイクルごと）
+/// FOCモードログカウンタ（1Hz = 5000サイクルごと @ 5kHz）
 static FOC_MODE_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// FOC制御の実行
@@ -107,8 +107,8 @@ pub async fn execute(
         }
     }
 
-    // 電圧ベクトル制限（30%に制限）
-    let max_voltage = DEFAULT_V_DC_BUS * 0.30;
+    // 電圧ベクトル制限（50%に制限）
+    let max_voltage = DEFAULT_V_DC_BUS * 0.50;
 
     // 逆回転防止：Vqを正の値のみに制限（一方向回転）
     let vq_cmd_positive = vq_cmd.max(0.0);
@@ -121,9 +121,9 @@ pub async fn execute(
     let pwm_max_duty = motor_driver.max_duty();
     let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, pwm_max_duty);
 
-    // デバッグ用：FOC制御の詳細ログ（10Hz = 250回に1回）
+    // デバッグ用：FOC制御の詳細ログ（10Hz = 500回に1回 @ 5kHz）
     let count = FOC_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if count >= 250 {
+    if count >= 500 {
         FOC_LOG_COUNTER.store(0, Ordering::Relaxed);
         let angle_deg = hall_electrical_angle * 180.0 / core::f32::consts::PI;
         let advance_deg = hall_sensor.get_current_advance_deg();
@@ -148,8 +148,8 @@ pub async fn execute(
 
     // デバッグログ（低頻度）
     let mode_count = FOC_MODE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if mode_count >= 2500 {
-        // 1秒ごと（2.5kHz / 2500 = 1Hz）
+    if mode_count >= 5000 {
+        // 1秒ごと（5kHz / 5000 = 1Hz）
         FOC_MODE_LOG_COUNTER.store(0, Ordering::Relaxed);
 
         // TIM4ベースのHallセンサ値を取得（ログ用）

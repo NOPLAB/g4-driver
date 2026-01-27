@@ -7,6 +7,19 @@ use crate::config::advance_angle::{
 };
 use crate::hall_tim;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_6, PI, TAU};
+use libm::fmodf;
+
+/// 角度を [0, TAU) に高速正規化
+/// whileループを使わず、fmodf で一発計算
+#[inline(always)]
+fn normalize_angle(angle: f32) -> f32 {
+    let a = fmodf(angle, TAU);
+    if a < 0.0 {
+        a + TAU
+    } else {
+        a
+    }
+}
 
 /// Hall state lookup table (foc-simple compatible)
 /// Maps raw hall state (1-6) to normalized index (0-5)
@@ -146,17 +159,11 @@ impl HallSensor {
 
             // Calculate electrical angle from mechanical angle
             // 機械角ベース + 固定オフセット + キャリブレーションオフセット
-            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
-                + MECHANICAL_TO_ELECTRICAL_OFFSET
-                + self.electrical_offset;
-
-            // Normalize electrical angle to [0, TAU)
-            while electrical_angle >= TAU {
-                electrical_angle -= TAU;
-            }
-            while electrical_angle < 0.0 {
-                electrical_angle += TAU;
-            }
+            let electrical_angle = normalize_angle(
+                self.mechanical_angle * (self.pole_pairs as f32)
+                    + MECHANICAL_TO_ELECTRICAL_OFFSET
+                    + self.electrical_offset,
+            );
 
             return (electrical_angle, self.speed_rpm);
         }
@@ -165,17 +172,11 @@ impl HallSensor {
         let normalized_state = HALL_STATE_TABLE[raw_hall_state as usize];
         if normalized_state == 255 {
             // Invalid state (should not happen after is_valid_state check, but safety check)
-            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
-                + MECHANICAL_TO_ELECTRICAL_OFFSET
-                + self.electrical_offset;
-
-            // Normalize electrical angle to [0, TAU)
-            while electrical_angle >= TAU {
-                electrical_angle -= TAU;
-            }
-            while electrical_angle < 0.0 {
-                electrical_angle += TAU;
-            }
+            let electrical_angle = normalize_angle(
+                self.mechanical_angle * (self.pole_pairs as f32)
+                    + MECHANICAL_TO_ELECTRICAL_OFFSET
+                    + self.electrical_offset,
+            );
 
             return (electrical_angle, self.speed_rpm);
         }
@@ -189,25 +190,14 @@ impl HallSensor {
 
             // Calculate mechanical angle from hall_idx (discrete, no interpolation)
             let hall_state_idx = self.hall_idx_base + (normalized_state as u32);
-            self.mechanical_angle = (hall_state_idx as f32) * self.angle_per_state;
-
-            // Normalize mechanical angle to [0, TAU)
-            while self.mechanical_angle >= TAU {
-                self.mechanical_angle -= TAU;
-            }
+            self.mechanical_angle = normalize_angle((hall_state_idx as f32) * self.angle_per_state);
 
             // 電気角計算: 機械角ベース + 固定オフセット + キャリブレーションオフセット
-            let mut electrical_angle = self.mechanical_angle * (self.pole_pairs as f32)
-                + MECHANICAL_TO_ELECTRICAL_OFFSET
-                + self.electrical_offset;
-
-            // Normalize electrical angle to [0, TAU)
-            while electrical_angle >= TAU {
-                electrical_angle -= TAU;
-            }
-            while electrical_angle < 0.0 {
-                electrical_angle += TAU;
-            }
+            let electrical_angle = normalize_angle(
+                self.mechanical_angle * (self.pole_pairs as f32)
+                    + MECHANICAL_TO_ELECTRICAL_OFFSET
+                    + self.electrical_offset,
+            );
 
             return (electrical_angle, self.speed_rpm);
         }
@@ -224,14 +214,9 @@ impl HallSensor {
             if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
                 let mechanical_omega = self.speed_rpm * (TAU / 60.0);
                 let angle_increment = mechanical_omega * self.time_since_edge;
-                self.mechanical_angle = base_mechanical_angle + angle_increment;
+                self.mechanical_angle = normalize_angle(base_mechanical_angle + angle_increment);
             } else {
                 self.mechanical_angle = base_mechanical_angle;
-            }
-
-            // Normalize mechanical angle
-            while self.mechanical_angle >= TAU {
-                self.mechanical_angle -= TAU;
             }
 
             // 電気角計算（補間ベース）
@@ -245,18 +230,10 @@ impl HallSensor {
 
             // 進角を適用
             if self.enable_advance_angle && self.speed_rpm > MIN_SPEED_FOR_ADVANCE {
-                let advance_rad = self.calculate_advance_angle(self.speed_rpm);
-                electrical_angle += advance_rad;
+                electrical_angle += self.calculate_advance_angle(self.speed_rpm);
             }
 
-            // Normalize
-            while electrical_angle >= TAU {
-                electrical_angle -= TAU;
-            }
-            while electrical_angle < 0.0 {
-                electrical_angle += TAU;
-            }
-            return (electrical_angle, self.speed_rpm);
+            return (normalize_angle(electrical_angle), self.speed_rpm);
         }
 
         // Calculate instant speed from TIM4 period
@@ -328,25 +305,17 @@ impl HallSensor {
         let base_mechanical_angle = (hall_state_idx as f32) * self.angle_per_state;
 
         // Apply angle interpolation if enabled and motor is moving
-        if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
+        self.mechanical_angle = if self.enable_interpolation && self.speed_rpm.abs() > 1.0 {
             // Calculate mechanical angular velocity (rad/s)
             let mechanical_omega = self.speed_rpm * (TAU / 60.0); // RPM to rad/s (2*PI/60)
 
             // Interpolate angle based on time since last edge
             let angle_increment = mechanical_omega * self.time_since_edge;
-            self.mechanical_angle = base_mechanical_angle + angle_increment;
+            normalize_angle(base_mechanical_angle + angle_increment)
         } else {
             // No interpolation or very low speed: use discrete Hall sensor angle
-            self.mechanical_angle = base_mechanical_angle;
-        }
-
-        // Normalize mechanical angle to [0, TAU)
-        while self.mechanical_angle >= TAU {
-            self.mechanical_angle -= TAU;
-        }
-        while self.mechanical_angle < 0.0 {
-            self.mechanical_angle += TAU;
-        }
+            base_mechanical_angle
+        };
 
         // 電気角計算: 補間された機械角から計算（テーブル参照方式から変更）
         // 補間が有効でモーターが回転している場合は、機械角ベースの連続的な電気角を使用
@@ -364,19 +333,10 @@ impl HallSensor {
         // 進角（Advance Angle）を適用
         // 高速回転時にトルク効率を最大化するため、電気角を進める
         if self.enable_advance_angle && self.speed_rpm > MIN_SPEED_FOR_ADVANCE {
-            let advance_rad = self.calculate_advance_angle(self.speed_rpm);
-            electrical_angle += advance_rad;
+            electrical_angle += self.calculate_advance_angle(self.speed_rpm);
         }
 
-        // Normalize electrical angle to [0, TAU)
-        while electrical_angle >= TAU {
-            electrical_angle -= TAU;
-        }
-        while electrical_angle < 0.0 {
-            electrical_angle += TAU;
-        }
-
-        (electrical_angle, self.speed_rpm)
+        (normalize_angle(electrical_angle), self.speed_rpm)
     }
 
     /// 進角を計算（速度に応じた線形補間）
@@ -413,17 +373,11 @@ impl HallSensor {
     /// 機械角ベース + 固定オフセット + キャリブレーションオフセット
     #[allow(dead_code)]
     pub fn get_electrical_angle(&self) -> f32 {
-        let mut angle = self.mechanical_angle * (self.pole_pairs as f32)
-            + MECHANICAL_TO_ELECTRICAL_OFFSET
-            + self.electrical_offset;
-        // Normalize to [0, TAU)
-        while angle >= TAU {
-            angle -= TAU;
-        }
-        while angle < 0.0 {
-            angle += TAU;
-        }
-        angle
+        normalize_angle(
+            self.mechanical_angle * (self.pole_pairs as f32)
+                + MECHANICAL_TO_ELECTRICAL_OFFSET
+                + self.electrical_offset,
+        )
     }
 
     /// Get current mechanical angle in radians

@@ -21,6 +21,7 @@ const USE_IDSP_COSSIN: bool = true;
 /// # Implementation
 /// Uses idsp::cossin() for fast trigonometric calculation (~40 cycles on Cortex-M)
 /// compared to libm::cosf/sinf (~100-200 cycles). Can be switched via USE_IDSP_COSSIN.
+#[inline]
 pub fn inverse_park(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
     if USE_IDSP_COSSIN {
         inverse_park_idsp(vd, vq, theta)
@@ -104,12 +105,20 @@ pub fn inverse_clarke(v_alpha: f32, v_beta: f32) -> (f32, f32, f32) {
 ///
 /// # Returns
 /// Tuple of (vd_limited, vq_limited)
+#[inline]
 pub fn limit_voltage(vd: f32, vq: f32, max_voltage: f32) -> (f32, f32) {
-    let magnitude = sqrtf(vd * vd + vq * vq);
+    // Fast path: vd == 0 の場合（SPMSMで一般的）、sqrtfをスキップ
+    if vd == 0.0 {
+        let vq_limited = vq.clamp(-max_voltage, max_voltage);
+        return (0.0, vq_limited);
+    }
 
-    if magnitude > max_voltage {
+    let magnitude_sq = vd * vd + vq * vq;
+    let max_voltage_sq = max_voltage * max_voltage;
+
+    if magnitude_sq > max_voltage_sq {
         // Scale down both components proportionally
-        let scale = max_voltage / magnitude;
+        let scale = max_voltage / sqrtf(magnitude_sq);
         (vd * scale, vq * scale)
     } else {
         (vd, vq)

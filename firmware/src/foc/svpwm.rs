@@ -7,8 +7,6 @@
 // detection instead of trigonometric functions, providing better
 // performance and accuracy for embedded systems.
 
-use libm::roundf;
-
 const SQRT3: f32 = 1.732_050_8; // sqrt(3)
 
 /// Calculate Space Vector PWM duty cycles
@@ -34,6 +32,7 @@ const SQRT3: f32 = 1.732_050_8; // sqrt(3)
 /// 3. Determine sector (1-6) based on signs of x/y/z
 /// 4. Calculate duty cycles directly from x/y/z values
 /// 5. Convert from range [-1, 1] to [0, max_duty]
+#[inline]
 pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
     // Prevent division by zero
     if v_dc <= 0.0 {
@@ -74,10 +73,12 @@ pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, v_dc: f32, max_duty: u16) -> (
     };
 
     // Convert from range [-1, 1] to [0, max_duty]
-    // Formula: duty = (value + 1.0) / 2.0 * max_duty
-    let duty_u = roundf((ta + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
-    let duty_v = roundf((tb + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
-    let duty_w = roundf((tc + 1.0) / 2.0 * max_duty as f32).clamp(0.0, max_duty as f32) as u16;
+    // Formula: duty = (value + 1.0) / 2.0 * max_duty + 0.5 (四捨五入)
+    // 注: +0.5してからas u16で切り捨てることでroundfと同等の結果を得る
+    let max_f = max_duty as f32;
+    let duty_u = (((ta + 1.0) * 0.5 * max_f + 0.5).clamp(0.0, max_f)) as u16;
+    let duty_v = (((tb + 1.0) * 0.5 * max_f + 0.5).clamp(0.0, max_f)) as u16;
+    let duty_w = (((tc + 1.0) * 0.5 * max_f + 0.5).clamp(0.0, max_f)) as u16;
 
     (duty_u, duty_v, duty_w)
 }
