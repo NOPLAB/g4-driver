@@ -20,9 +20,29 @@ static FOC_MODE_LOG_COUNTER: AtomicU32 = AtomicU32::new(0);
 /// 無効Hall状態の連続カウンタ（一時的なノイズでPIリセットしないため）
 static INVALID_HALL_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// 速度低下（脱落）の連続カウンタ
+static STALL_COUNTER: AtomicU32 = AtomicU32::new(0);
+
 /// PIリセットまでの無効Hall状態の連続回数閾値
 /// 10kHz制御で20回 = 2ms以上連続して無効な場合のみリセット
 const INVALID_HALL_THRESHOLD: u32 = 20;
+
+/// FOC制御の実行結果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocResult {
+    /// 正常に継続
+    Continue,
+    /// Hall状態が無効（一時的なエラー、継続可能）
+    InvalidHall,
+    /// 速度が低下してOpenLoopに戻るべき（脱落検出）
+    Stalled,
+}
+
+/// 脱落カウンタをリセット（モード切り替え時に呼び出す）
+pub fn reset_stall_counter() {
+    STALL_COUNTER.store(0, Ordering::Relaxed);
+    INVALID_HALL_COUNTER.store(0, Ordering::Relaxed);
+}
 
 /// FOC制御の実行
 ///
@@ -34,14 +54,14 @@ const INVALID_HALL_THRESHOLD: u32 = 20;
 /// * `dt` - 制御周期 [s]
 ///
 /// # 戻り値
-/// * `(bool, f32)` - (Hall状態が有効か, 新しいランプ速度)
+/// * `FocResult` - 実行結果（Continue, InvalidHall, Stalled）
 pub async fn execute(
     hall_sensor: &mut HallSensor,
     speed_pi: &mut PiController,
     motor_driver: &mut MotorDriver,
     ramped_target_speed: &mut f32,
     dt: f32,
-) -> bool {
+) -> FocResult {
     // 電気角と速度とHall状態を取得（TIM4ハードウェアベース、foc-simple互換計算）
     // Hall状態は1回だけ読み取り、再取得による競合を防止
     let (hall_electrical_angle, speed_rpm, hall_state) = hall_sensor.update(dt);
@@ -75,7 +95,7 @@ pub async fn execute(
         // 一時的な無効状態: PWMは前回値を維持（何もしない）
         // これにより、Hall遷移中の一時的な無効状態でモーターが停止しない
 
-        return false;
+        return FocResult::InvalidHall;
     }
 
     // 有効なHall状態: 無効カウンタをリセット
@@ -129,8 +149,8 @@ pub async fn execute(
         }
     }
 
-    // 電圧ベクトル制限（50%に制限）
-    let max_voltage = DEFAULT_V_DC_BUS * 0.50;
+    // 電圧ベクトル制限（100%）
+    let max_voltage = DEFAULT_V_DC_BUS * 1.0;
 
     // 逆回転防止：Vqを正の値のみに制限（一方向回転）
     let vq_cmd_positive = vq_cmd.max(0.0);
@@ -164,6 +184,29 @@ pub async fn execute(
     // ステータス更新（Atomic変数でロックフリー）
     state::update_motor_status_atomic(speed_rpm, hall_electrical_angle);
 
+    // 速度低下（脱落）検出
+    // 目標速度が設定されているのに実測速度が閾値以下の場合をカウント
+    if *ramped_target_speed > foc_stall::STALL_SPEED_THRESHOLD
+        && speed_rpm < foc_stall::STALL_SPEED_THRESHOLD
+    {
+        let stall_count = STALL_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+
+        if stall_count >= foc_stall::STALL_COUNT_THRESHOLD {
+            warn!(
+                "[FOC] Stall detected: speed={} RPM < {} RPM for {}+ cycles, switching to OpenLoop",
+                speed_rpm,
+                foc_stall::STALL_SPEED_THRESHOLD,
+                foc_stall::STALL_COUNT_THRESHOLD
+            );
+            // カウンタをリセット（次回のFOC移行に備える）
+            STALL_COUNTER.store(0, Ordering::Relaxed);
+            return FocResult::Stalled;
+        }
+    } else {
+        // 速度が回復したらカウンタをリセット
+        STALL_COUNTER.store(0, Ordering::Relaxed);
+    }
+
     // デバッグログ（低頻度）- ローカル変数を再利用してMutexロックを回避
     let mode_count = FOC_MODE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
     if mode_count >= 10000 {
@@ -185,5 +228,5 @@ pub async fn execute(
         );
     }
 
-    true
+    FocResult::Continue
 }

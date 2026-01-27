@@ -153,6 +153,9 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                     // PI制御をリセット（クリーンな状態からスタート）
                     speed_pi.reset();
 
+                    // FOCの脱落カウンタをリセット
+                    foc_mode::reset_stall_counter();
+
                     // Hall センサーの速度フィルタを現在の速度で初期化
                     hall_sensor.reset_speed_filter(current_rpm);
 
@@ -165,7 +168,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
 
             ControlMode::ClosedLoopFoc => {
                 // FOC制御を実行
-                let success = foc_mode::execute(
+                let result = foc_mode::execute(
                     &mut hall_sensor,
                     &mut speed_pi,
                     &mut motor_driver,
@@ -174,10 +177,30 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                 )
                 .await;
 
-                // Hall状態が無効な場合は処理をスキップ
-                if !success {
-                    Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
-                    continue;
+                match result {
+                    foc_mode::FocResult::Continue => {
+                        // 正常継続
+                    }
+                    foc_mode::FocResult::InvalidHall => {
+                        // Hall状態が無効な場合は処理をスキップ
+                        Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
+                        continue;
+                    }
+                    foc_mode::FocResult::Stalled => {
+                        // 速度低下検出: OpenLoopからやり直し
+                        info!("FOC stalled, restarting from OpenLoop mode");
+
+                        // 各コントローラをリセット
+                        speed_pi.reset();
+                        hall_sensor.reset();
+                        openloop.reset();
+                        openloop_mode::reset_execution_counter();
+                        foc_mode::reset_stall_counter();
+                        ramped_target_speed = 0.0;
+
+                        // OpenLoopモードに切り替え
+                        control_mode = ControlMode::OpenLoop;
+                    }
                 }
             }
 

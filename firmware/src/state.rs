@@ -40,7 +40,7 @@ impl MotorContext {
     /// デフォルト値で新しいモーターコンテキストを作成
     pub const fn new() -> Self {
         Self {
-            target_speed: 2000.0,
+            target_speed: 3000.0,
             pi_gains: (DEFAULT_SPEED_KP, DEFAULT_SPEED_KI),
             enabled: true,
             status: MotorStatus::new(),

@@ -253,7 +253,8 @@ impl MotorCalibration {
                 }
 
                 // 引き続きゆっくり回転（2.5 rad/s ≈ 24 RPM）
-                self.shaft_position_req.increment(0.001);
+                // 10kHz更新なので、1ステップあたり: 2.5 / 10000 = 0.00025 rad
+                self.shaft_position_req.increment(0.00025);
 
                 let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
                 Ok((electrical_angle, self.torque))
@@ -277,7 +278,8 @@ impl MotorCalibration {
                     Ok((0.0, 0.0)) // トルク0で停止
                 } else {
                     // 逆方向に回転（開始位置に戻る）- ゆっくり
-                    self.shaft_position_req.increment(-0.002);
+                    // 10kHz更新なので、1ステップあたり: 5.0 / 10000 = 0.0005 rad
+                    self.shaft_position_req.increment(-0.0005);
 
                     let electrical_angle =
                         self.shaft_position_req.get_angle() * self.pole_pairs as f32;

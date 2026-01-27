@@ -49,6 +49,17 @@ pub const MIN_VOLTAGE_ERROR_THRESHOLD: f32 = 2.0;
 /// 速度指令の最大加速度 [RPM/s]（急激な速度変化を抑制してPI制御を安定化）
 pub const MAX_SPEED_ACCELERATION: f32 = 100.0;
 
+/// FOC脱落検出パラメータ
+pub mod foc_stall {
+    /// FOC脱落判定の速度閾値 [RPM]
+    /// 実測速度がこの値以下になると脱落カウンタが増加
+    pub const STALL_SPEED_THRESHOLD: f32 = 50.0;
+
+    /// FOC脱落判定の連続回数閾値
+    /// 10kHz制御で1000回 = 100ms以上連続して低速ならOpenLoopに戻る
+    pub const STALL_COUNT_THRESHOLD: u32 = 1000;
+}
+
 /// オープンループ始動パラメータ（6ステップ駆動）
 pub mod openloop {
     /// 初期回転数 [RPM]（起動用：100RPMから開始）
