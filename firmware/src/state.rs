@@ -2,6 +2,12 @@
 //!
 //! タスク間で共有される状態をMutexで保護して管理します。
 //! 状態は論理的にグループ化されたコンテキストに整理されています。
+//!
+//! パフォーマンス最適化:
+//! - ステータス更新はAtomic変数を使用（FOC/OpenLoopの高頻度更新用）
+//! - 複合操作関数で複数のMutexロックを1回に統合
+
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -23,6 +29,8 @@ pub struct MotorContext {
     /// モーター有効/無効フラグ
     pub enabled: bool,
     /// モーターステータス（CAN送信用）
+    /// 注: 高速制御ループではAtomic変数を使用（update_motor_status_atomic）
+    #[allow(dead_code)]
     pub status: MotorStatus,
     /// モーター制御モード（ClosedLoopFoc / Calibration等）
     pub control_mode: ControlMode,
@@ -99,6 +107,18 @@ impl SystemContext {
 /// グローバルモーターコンテキスト
 pub static MOTOR_CONTEXT: Mutex<ThreadModeRawMutex, MotorContext> = Mutex::new(MotorContext::new());
 
+// ========================================
+// Atomic変数（高速ステータス更新用）
+// ========================================
+// FOC/OpenLoopの制御ループ内で高頻度にステータスを更新するため、
+// Mutexのオーバーヘッドを回避するためにAtomic変数を使用
+
+/// モーター速度（RPM）のビット表現
+static STATUS_SPEED_RPM_BITS: AtomicU32 = AtomicU32::new(0);
+
+/// 電気角（ラジアン）のビット表現
+static STATUS_ELECTRICAL_ANGLE_BITS: AtomicU32 = AtomicU32::new(0);
+
 /// グローバルキャリブレーションコンテキスト
 pub static CALIBRATION_CONTEXT: Mutex<ThreadModeRawMutex, CalibrationContext> =
     Mutex::new(CalibrationContext::new());
@@ -112,6 +132,7 @@ pub static SYSTEM_CONTEXT: Mutex<ThreadModeRawMutex, SystemContext> =
 // ========================================
 
 /// 目標速度を取得
+#[allow(dead_code)]
 pub async fn get_target_speed() -> f32 {
     MOTOR_CONTEXT.lock().await.target_speed
 }
@@ -122,6 +143,7 @@ pub async fn set_target_speed(speed: f32) {
 }
 
 /// PIゲインを取得
+#[allow(dead_code)]
 pub async fn get_pi_gains() -> (f32, f32) {
     MOTOR_CONTEXT.lock().await.pi_gains
 }
@@ -142,6 +164,7 @@ pub async fn set_motor_enabled(enabled: bool) {
 }
 
 /// モーターステータスを取得
+#[allow(dead_code)]
 pub async fn get_motor_status() -> MotorStatus {
     MOTOR_CONTEXT.lock().await.status
 }
@@ -247,4 +270,55 @@ pub async fn apply_calibration_from_config(config: &StoredConfig) {
     ctx.result.electrical_offset = config.calibration_electrical_offset;
     ctx.result.direction_inversed = config.calibration_direction_inversed;
     ctx.result.success = config.calibration_success;
+}
+
+// ========================================
+// Atomic ステータス更新関数（高速制御ループ用）
+// ========================================
+
+/// モーターステータスをAtomic変数で更新（ロックフリー）
+///
+/// FOC/OpenLoopの制御ループ内で高頻度に呼び出されるため、
+/// Mutexのオーバーヘッドを回避するためにAtomic変数を使用します。
+#[inline(always)]
+pub fn update_motor_status_atomic(speed_rpm: f32, electrical_angle: f32) {
+    STATUS_SPEED_RPM_BITS.store(speed_rpm.to_bits(), Ordering::Relaxed);
+    STATUS_ELECTRICAL_ANGLE_BITS.store(electrical_angle.to_bits(), Ordering::Relaxed);
+}
+
+/// モーターステータスをAtomic変数から取得（ロックフリー）
+///
+/// CAN送信タスクなど、ステータスを読み取るタスクで使用します。
+#[inline(always)]
+#[allow(dead_code)]
+pub fn get_motor_status_atomic() -> (f32, f32) {
+    (
+        f32::from_bits(STATUS_SPEED_RPM_BITS.load(Ordering::Relaxed)),
+        f32::from_bits(STATUS_ELECTRICAL_ANGLE_BITS.load(Ordering::Relaxed)),
+    )
+}
+
+// ========================================
+// FOC制御ループ用複合操作関数
+// ========================================
+
+/// FOC制御ループで必要な入力パラメータ
+#[derive(Clone, Copy)]
+pub struct FocInputParams {
+    /// 目標速度 [RPM]
+    pub target_speed: f32,
+    /// PIゲイン (Kp, Ki)
+    pub pi_gains: (f32, f32),
+}
+
+/// FOC制御ループの入力パラメータを一括取得（1回のロックで複数値取得）
+///
+/// 従来は `get_target_speed()` と `get_pi_gains()` を個別に呼び出していたが、
+/// この関数で1回のMutexロックに統合することでオーバーヘッドを削減します。
+pub async fn get_foc_input_params() -> FocInputParams {
+    let ctx = MOTOR_CONTEXT.lock().await;
+    FocInputParams {
+        target_speed: ctx.target_speed,
+        pi_gains: ctx.pi_gains,
+    }
 }

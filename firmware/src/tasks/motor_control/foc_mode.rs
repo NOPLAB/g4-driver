@@ -58,17 +58,16 @@ pub async fn execute(
         return false;
     }
 
-    // PIゲイン更新チェック（非同期で更新された場合）
-    {
-        let (kp, ki) = state::get_pi_gains().await;
-        if kp != speed_pi.get_kp() || ki != speed_pi.get_ki() {
-            speed_pi.set_gains(kp, ki);
-            info!("PI gains updated: Kp={}, Ki={}", kp, ki);
-        }
-    }
+    // FOC入力パラメータを一括取得（1回のMutexロックで統合）
+    let foc_params = state::get_foc_input_params().await;
+    let target_speed = foc_params.target_speed;
+    let (kp, ki) = foc_params.pi_gains;
 
-    // 目標速度取得
-    let target_speed = state::get_target_speed().await;
+    // PIゲイン更新チェック（非同期で更新された場合）
+    if kp != speed_pi.get_kp() || ki != speed_pi.get_ki() {
+        speed_pi.set_gains(kp, ki);
+        info!("PI gains updated: Kp={}, Ki={}", kp, ki);
+    }
 
     // 速度ランプ（加速度制限）を適用
     let speed_error = target_speed - *ramped_target_speed;
@@ -139,14 +138,10 @@ pub async fn execute(
     // FOCモードではすべてのチャネルを有効化
     motor_driver.enable_all_channels();
 
-    // ステータス更新
-    {
-        let mut ctx = state::MOTOR_CONTEXT.lock().await;
-        ctx.status.speed_rpm = speed_rpm;
-        ctx.status.electrical_angle = hall_electrical_angle;
-    }
+    // ステータス更新（Atomic変数でロックフリー）
+    state::update_motor_status_atomic(speed_rpm, hall_electrical_angle);
 
-    // デバッグログ（低頻度）
+    // デバッグログ（低頻度）- ローカル変数を再利用してMutexロックを回避
     let mode_count = FOC_MODE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
     if mode_count >= 5000 {
         // 1秒ごと（5kHz / 5000 = 1Hz）
@@ -155,15 +150,13 @@ pub async fn execute(
         // TIM4ベースのHallセンサ値を取得（ログ用）
         let period_cycles = hall_tim::get_period_cycles();
 
-        // 最新のステータスを取得
-        let status = state::get_motor_status().await;
-        let target_speed = state::get_target_speed().await;
+        // ローカル変数を使用（追加のMutexロック不要）
         debug!(
             "[FOC] Speed: {}/{} RPM (ramped: {}), Angle: {}rad, Hall: {}, Period: {} cycles",
-            status.speed_rpm,
+            speed_rpm,
             target_speed,
             *ramped_target_speed,
-            status.electrical_angle,
+            hall_electrical_angle,
             hall_state,
             period_cycles
         );

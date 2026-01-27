@@ -60,8 +60,8 @@ pub mod openloop {
     /// 加速度 [RPM/s]（起動用：適度な加速）
     pub const DEFAULT_ACCELERATION_RPM_PER_S: f32 = 200.0;
 
-    /// デューティ比 (0-100)（Hall ベース駆動用：10%）
-    pub const DEFAULT_DUTY_RATIO: u16 = 10;
+    /// デューティ比 (0-100)（Hall ベース駆動用：15%）
+    pub const DEFAULT_DUTY_RATIO: u16 = 15;
 
     /// 強制転流フェーズの実行回数（5000 = 1秒 @ 5kHz）
     pub const FORCED_COMMUTATION_CYCLES: u32 = 5000;

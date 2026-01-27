@@ -79,6 +79,7 @@ pub mod can_ids {
 
 /// Motor status structure
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct MotorStatus {
     pub speed_rpm: f32,
     pub electrical_angle: f32,

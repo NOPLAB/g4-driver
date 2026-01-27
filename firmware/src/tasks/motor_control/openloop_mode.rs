@@ -128,12 +128,8 @@ pub async fn execute(
     // チャンネル有効/無効設定
     motor_driver.set_channels(enable_u, enable_v, enable_w);
 
-    // ステータス更新
-    {
-        let mut ctx = state::MOTOR_CONTEXT.lock().await;
-        ctx.status.speed_rpm = openloop.get_current_rpm();
-        ctx.status.electrical_angle = 0.0;
-    }
+    // ステータス更新（Atomic変数でロックフリー）
+    state::update_motor_status_atomic(openloop.get_current_rpm(), 0.0);
 
     // デバッグログ（1秒ごと）
     let count = OPENLOOP_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
