@@ -1,0 +1,12 @@
+[package]
+name = "g4-driver-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "CAN protocol definitions for G4 BLDC motor driver"
+
+[dependencies]
+defmt = { version = "1.0.1", optional = true }
+
+[features]
+default = []
+defmt = ["dep:defmt"]

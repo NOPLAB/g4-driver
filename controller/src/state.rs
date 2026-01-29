@@ -6,18 +6,13 @@ use crate::can::{
 };
 
 /// Connection state
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ConnectionState {
+    #[default]
     Disconnected,
     Connecting,
     Connected,
     Error(String),
-}
-
-impl Default for ConnectionState {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 /// User settings (matches firmware StoredConfig)

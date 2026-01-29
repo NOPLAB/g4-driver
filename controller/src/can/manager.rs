@@ -6,7 +6,9 @@ use tokio::time::{timeout, Duration};
 use tokio_socketcan::{CANFrame, CANSocket};
 use tracing::{debug, info};
 
-use super::protocol::{self, can_ids, CalibrationStatus, MotorStatus, VoltageStatus};
+use g4_driver_protocol::{
+    self as protocol, can_ids, CalibrationStatus, MotorStatus, VoltageStatus,
+};
 
 /// CAN Manager for handling CAN communication
 pub struct CanManager {

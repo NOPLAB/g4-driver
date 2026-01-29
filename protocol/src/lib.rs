@@ -1,6 +1,9 @@
-// CAN communication protocol definitions for motor control
+//! CAN communication protocol definitions for G4 BLDC motor driver
+//!
+//! This crate provides CAN protocol definitions shared between
+//! firmware (no_std) and controller (std) applications.
 
-use crate::fmt::*;
+#![no_std]
 
 /// CAN message IDs
 pub mod can_ids {
@@ -13,9 +16,6 @@ pub mod can_ids {
     /// Motor enable command (u8, 1 byte: 0=disable, 1=enable)
     pub const ENABLE_CMD: u32 = 0x102;
 
-    /// Start calibration command (no data, or optionally 1 byte for torque 0-100)
-    pub const START_CALIBRATION: u32 = 0x106;
-
     /// Save config to flash command (no data)
     pub const SAVE_CONFIG: u32 = 0x103;
 
@@ -24,6 +24,9 @@ pub mod can_ids {
 
     /// Reset config to defaults command (no data)
     pub const RESET_CONFIG: u32 = 0x105;
+
+    /// Start calibration command (no data, or optionally 1 byte for torque 0-100)
+    pub const START_CALIBRATION: u32 = 0x106;
 
     // === Motor Control Parameter Commands (0x110-0x113) ===
     /// Motor voltage params (max_voltage: f32, v_dc_bus: f32, 8 bytes)
@@ -58,19 +61,15 @@ pub mod can_ids {
     pub const CONTROL_TIMING: u32 = 0x150;
 
     /// Motor status feedback (speed: f32, angle: f32, 8 bytes)
-    #[allow(dead_code)]
     pub const STATUS: u32 = 0x200;
 
     /// Voltage status feedback (voltage: f32, flags: u8, 5 bytes)
-    #[allow(dead_code)]
     pub const VOLTAGE_STATUS: u32 = 0x201;
 
     /// Config status feedback (version: u16, crc_valid: u8, 3 bytes)
-    #[allow(dead_code)]
     pub const CONFIG_STATUS: u32 = 0x202;
 
     /// Calibration status feedback (electrical_offset: f32, direction_inversed: u8, success: u8, 6 bytes)
-    #[allow(dead_code)]
     pub const CALIBRATION_STATUS: u32 = 0x203;
 
     /// Emergency stop (any data length)
@@ -78,8 +77,8 @@ pub mod can_ids {
 }
 
 /// Motor status structure
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MotorStatus {
     pub speed_rpm: f32,
     pub electrical_angle: f32,
@@ -101,8 +100,8 @@ impl Default for MotorStatus {
 }
 
 /// Voltage status structure
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VoltageStatus {
     pub voltage: f32,
     pub overvoltage: bool,
@@ -125,6 +124,35 @@ impl Default for VoltageStatus {
     }
 }
 
+/// Calibration status structure
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CalibrationStatus {
+    pub electrical_offset: f32,
+    pub direction_inversed: bool,
+    pub success: bool,
+}
+
+impl CalibrationStatus {
+    pub const fn new() -> Self {
+        Self {
+            electrical_offset: 0.0,
+            direction_inversed: false,
+            success: false,
+        }
+    }
+}
+
+impl Default for CalibrationStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Parse Functions (decode incoming CAN messages)
+// ============================================================================
+
 /// Parse speed command from CAN data
 ///
 /// # Arguments
@@ -135,16 +163,11 @@ impl Default for VoltageStatus {
 /// * `None` if data length is incorrect
 pub fn parse_speed_command(data: &[u8]) -> Option<f32> {
     if data.len() < 4 {
-        error!("Speed command: invalid data length {}", data.len());
         return None;
     }
 
-    // Parse as little-endian f32
     let speed_bytes = [data[0], data[1], data[2], data[3]];
-    let speed_rpm = f32::from_le_bytes(speed_bytes);
-
-    info!("Speed command received: {} RPM", speed_rpm);
-    Some(speed_rpm)
+    Some(f32::from_le_bytes(speed_bytes))
 }
 
 /// Parse PI gains from CAN data
@@ -157,18 +180,15 @@ pub fn parse_speed_command(data: &[u8]) -> Option<f32> {
 /// * `None` if data length is incorrect
 pub fn parse_pi_gains(data: &[u8]) -> Option<(f32, f32)> {
     if data.len() < 8 {
-        error!("PI gains: invalid data length {}", data.len());
         return None;
     }
 
-    // Parse as little-endian f32 values
     let kp_bytes = [data[0], data[1], data[2], data[3]];
     let ki_bytes = [data[4], data[5], data[6], data[7]];
 
     let kp = f32::from_le_bytes(kp_bytes);
     let ki = f32::from_le_bytes(ki_bytes);
 
-    info!("PI gains received: Kp={}, Ki={}", kp, ki);
     Some((kp, ki))
 }
 
@@ -183,13 +203,234 @@ pub fn parse_pi_gains(data: &[u8]) -> Option<(f32, f32)> {
 /// * `None` if data length is incorrect
 pub fn parse_enable_command(data: &[u8]) -> Option<bool> {
     if data.is_empty() {
-        error!("Enable command: no data");
         return None;
     }
 
-    let enable = data[0] != 0;
-    info!("Motor enable command: {}", enable);
-    Some(enable)
+    Some(data[0] != 0)
+}
+
+/// Parse motor voltage parameters from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 8 bytes)
+///
+/// # Returns
+/// * `Some((max_voltage, v_dc_bus))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_motor_voltage_params(data: &[u8]) -> Option<(f32, f32)> {
+    if data.len() < 8 {
+        return None;
+    }
+
+    let max_voltage_bytes = [data[0], data[1], data[2], data[3]];
+    let v_dc_bus_bytes = [data[4], data[5], data[6], data[7]];
+
+    let max_voltage = f32::from_le_bytes(max_voltage_bytes);
+    let v_dc_bus = f32::from_le_bytes(v_dc_bus_bytes);
+
+    Some((max_voltage, v_dc_bus))
+}
+
+/// Parse motor basic parameters from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 3 bytes)
+///
+/// # Returns
+/// * `Some((pole_pairs, max_duty))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_motor_basic_params(data: &[u8]) -> Option<(u8, u16)> {
+    if data.len() < 3 {
+        return None;
+    }
+
+    let pole_pairs = data[0];
+    let max_duty_bytes = [data[1], data[2]];
+    let max_duty = u16::from_le_bytes(max_duty_bytes);
+
+    Some((pole_pairs, max_duty))
+}
+
+/// Parse hall sensor parameters from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 8 bytes)
+///
+/// # Returns
+/// * `Some((speed_filter_alpha, hall_angle_offset))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_hall_sensor_params(data: &[u8]) -> Option<(f32, f32)> {
+    if data.len() < 8 {
+        return None;
+    }
+
+    let alpha_bytes = [data[0], data[1], data[2], data[3]];
+    let offset_bytes = [data[4], data[5], data[6], data[7]];
+
+    let speed_filter_alpha = f32::from_le_bytes(alpha_bytes);
+    let hall_angle_offset = f32::from_le_bytes(offset_bytes);
+
+    Some((speed_filter_alpha, hall_angle_offset))
+}
+
+/// Parse angle interpolation setting from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be at least 1 byte)
+///
+/// # Returns
+/// * `Some(enable)` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_angle_interpolation(data: &[u8]) -> Option<bool> {
+    if data.is_empty() {
+        return None;
+    }
+
+    Some(data[0] != 0)
+}
+
+/// Parse openloop RPM parameters from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 8 bytes)
+///
+/// # Returns
+/// * `Some((initial_rpm, target_rpm))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_openloop_rpm_params(data: &[u8]) -> Option<(f32, f32)> {
+    if data.len() < 8 {
+        return None;
+    }
+
+    let initial_bytes = [data[0], data[1], data[2], data[3]];
+    let target_bytes = [data[4], data[5], data[6], data[7]];
+
+    let initial_rpm = f32::from_le_bytes(initial_bytes);
+    let target_rpm = f32::from_le_bytes(target_bytes);
+
+    Some((initial_rpm, target_rpm))
+}
+
+/// Parse openloop acceleration/duty parameters from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 6 bytes)
+///
+/// # Returns
+/// * `Some((acceleration, duty_ratio))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_openloop_accel_duty_params(data: &[u8]) -> Option<(f32, u16)> {
+    if data.len() < 6 {
+        return None;
+    }
+
+    let accel_bytes = [data[0], data[1], data[2], data[3]];
+    let duty_bytes = [data[4], data[5]];
+
+    let acceleration = f32::from_le_bytes(accel_bytes);
+    let duty_ratio = u16::from_le_bytes(duty_bytes);
+
+    Some((acceleration, duty_ratio))
+}
+
+/// Parse PWM configuration from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 6 bytes)
+///
+/// # Returns
+/// * `Some((frequency, dead_time))` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_pwm_config(data: &[u8]) -> Option<(u32, u16)> {
+    if data.len() < 6 {
+        return None;
+    }
+
+    let freq_bytes = [data[0], data[1], data[2], data[3]];
+    let dead_time_bytes = [data[4], data[5]];
+
+    let frequency = u32::from_le_bytes(freq_bytes);
+    let dead_time = u16::from_le_bytes(dead_time_bytes);
+
+    Some((frequency, dead_time))
+}
+
+/// Parse CAN configuration from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 4 bytes)
+///
+/// # Returns
+/// * `Some(bitrate)` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_can_config(data: &[u8]) -> Option<u32> {
+    if data.len() < 4 {
+        return None;
+    }
+
+    let bitrate_bytes = [data[0], data[1], data[2], data[3]];
+    Some(u32::from_le_bytes(bitrate_bytes))
+}
+
+/// Parse control timing from CAN data
+///
+/// # Arguments
+/// * `data` - CAN frame data (should be 8 bytes)
+///
+/// # Returns
+/// * `Some(control_period_us)` if parsing successful
+/// * `None` if data length is incorrect
+pub fn parse_control_timing(data: &[u8]) -> Option<u64> {
+    if data.len() < 8 {
+        return None;
+    }
+
+    let period_bytes = [
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+    ];
+    Some(u64::from_le_bytes(period_bytes))
+}
+
+// ============================================================================
+// Encode Functions (create outgoing CAN messages)
+// All functions return fixed-size arrays for no_std compatibility
+// ============================================================================
+
+/// Encode speed command into CAN data
+///
+/// # Arguments
+/// * `speed_rpm` - Target speed in RPM
+///
+/// # Returns
+/// 4-byte array containing encoded speed
+pub fn encode_speed_command(speed_rpm: f32) -> [u8; 4] {
+    speed_rpm.to_le_bytes()
+}
+
+/// Encode PI gains into CAN data
+///
+/// # Arguments
+/// * `kp` - Proportional gain
+/// * `ki` - Integral gain
+///
+/// # Returns
+/// 8-byte array containing encoded PI gains
+pub fn encode_pi_gains(kp: f32, ki: f32) -> [u8; 8] {
+    let mut data = [0u8; 8];
+    data[0..4].copy_from_slice(&kp.to_le_bytes());
+    data[4..8].copy_from_slice(&ki.to_le_bytes());
+    data
+}
+
+/// Encode enable command into CAN data
+///
+/// # Arguments
+/// * `enable` - Motor enable flag
+///
+/// # Returns
+/// 1-byte array containing encoded enable command
+pub fn encode_enable_command(enable: bool) -> [u8; 1] {
+    [if enable { 1 } else { 0 }]
 }
 
 /// Encode motor status into CAN data
@@ -200,20 +441,156 @@ pub fn parse_enable_command(data: &[u8]) -> Option<bool> {
 ///
 /// # Returns
 /// 8-byte array containing encoded status
-#[allow(dead_code)]
 pub fn encode_status(speed_rpm: f32, electrical_angle: f32) -> [u8; 8] {
     let mut data = [0u8; 8];
+    data[0..4].copy_from_slice(&speed_rpm.to_le_bytes());
+    data[4..8].copy_from_slice(&electrical_angle.to_le_bytes());
+    data
+}
 
-    // Encode speed as little-endian f32 (bytes 0-3)
-    let speed_bytes = speed_rpm.to_le_bytes();
-    data[0..4].copy_from_slice(&speed_bytes);
+/// Encode voltage status into CAN data
+///
+/// # Arguments
+/// * `voltage` - DC bus voltage in volts
+/// * `overvoltage` - Overvoltage flag
+/// * `undervoltage` - Undervoltage flag
+///
+/// # Returns
+/// 5-byte array containing encoded voltage status
+pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool) -> [u8; 5] {
+    let mut data = [0u8; 5];
+    data[0..4].copy_from_slice(&voltage.to_le_bytes());
 
-    // Encode angle as little-endian f32 (bytes 4-7)
-    let angle_bytes = electrical_angle.to_le_bytes();
-    data[4..8].copy_from_slice(&angle_bytes);
+    let mut flags = 0u8;
+    if overvoltage {
+        flags |= 0x01;
+    }
+    if undervoltage {
+        flags |= 0x02;
+    }
+    data[4] = flags;
 
     data
 }
+
+/// Encode config status into CAN data
+///
+/// # Arguments
+/// * `version` - Config version number
+/// * `crc_valid` - Whether CRC validation passed
+///
+/// # Returns
+/// 3-byte array containing encoded config status
+pub fn encode_config_status(version: u16, crc_valid: bool) -> [u8; 3] {
+    let mut data = [0u8; 3];
+    data[0..2].copy_from_slice(&version.to_le_bytes());
+    data[2] = if crc_valid { 1 } else { 0 };
+    data
+}
+
+/// Encode calibration status into CAN data
+///
+/// # Arguments
+/// * `electrical_offset` - Electrical offset in radians (0〜2π)
+/// * `direction_inversed` - Direction inversion flag
+/// * `success` - Calibration success flag
+///
+/// # Returns
+/// 6-byte array containing encoded calibration status
+pub fn encode_calibration_status(
+    electrical_offset: f32,
+    direction_inversed: bool,
+    success: bool,
+) -> [u8; 6] {
+    let mut data = [0u8; 6];
+    data[0..4].copy_from_slice(&electrical_offset.to_le_bytes());
+    data[4] = if direction_inversed { 1 } else { 0 };
+    data[5] = if success { 1 } else { 0 };
+    data
+}
+
+/// Encode motor voltage parameters into CAN data
+pub fn encode_motor_voltage_params(max_voltage: f32, v_dc_bus: f32) -> [u8; 8] {
+    let mut data = [0u8; 8];
+    data[0..4].copy_from_slice(&max_voltage.to_le_bytes());
+    data[4..8].copy_from_slice(&v_dc_bus.to_le_bytes());
+    data
+}
+
+/// Encode motor basic parameters into CAN data
+pub fn encode_motor_basic_params(pole_pairs: u8, max_duty: u16) -> [u8; 3] {
+    let mut data = [0u8; 3];
+    data[0] = pole_pairs;
+    data[1..3].copy_from_slice(&max_duty.to_le_bytes());
+    data
+}
+
+/// Encode hall sensor parameters into CAN data
+pub fn encode_hall_sensor_params(speed_filter_alpha: f32, hall_angle_offset: f32) -> [u8; 8] {
+    let mut data = [0u8; 8];
+    data[0..4].copy_from_slice(&speed_filter_alpha.to_le_bytes());
+    data[4..8].copy_from_slice(&hall_angle_offset.to_le_bytes());
+    data
+}
+
+/// Encode angle interpolation setting into CAN data
+pub fn encode_angle_interpolation(enable: bool) -> [u8; 1] {
+    [if enable { 1 } else { 0 }]
+}
+
+/// Encode openloop RPM parameters into CAN data
+pub fn encode_openloop_rpm_params(initial_rpm: f32, target_rpm: f32) -> [u8; 8] {
+    let mut data = [0u8; 8];
+    data[0..4].copy_from_slice(&initial_rpm.to_le_bytes());
+    data[4..8].copy_from_slice(&target_rpm.to_le_bytes());
+    data
+}
+
+/// Encode openloop acceleration/duty parameters into CAN data
+pub fn encode_openloop_accel_duty_params(acceleration: f32, duty_ratio: u16) -> [u8; 6] {
+    let mut data = [0u8; 6];
+    data[0..4].copy_from_slice(&acceleration.to_le_bytes());
+    data[4..6].copy_from_slice(&duty_ratio.to_le_bytes());
+    data
+}
+
+/// Encode PWM configuration into CAN data
+pub fn encode_pwm_config(frequency: u32, dead_time: u16) -> [u8; 6] {
+    let mut data = [0u8; 6];
+    data[0..4].copy_from_slice(&frequency.to_le_bytes());
+    data[4..6].copy_from_slice(&dead_time.to_le_bytes());
+    data
+}
+
+/// Encode CAN configuration into CAN data
+pub fn encode_can_config(bitrate: u32) -> [u8; 4] {
+    bitrate.to_le_bytes()
+}
+
+/// Encode control timing into CAN data
+pub fn encode_control_timing(control_period_us: u64) -> [u8; 8] {
+    control_period_us.to_le_bytes()
+}
+
+/// Encode start calibration command into CAN data
+///
+/// # Arguments
+/// * `torque` - Optional torque value (0-100). If None, returns empty array.
+///
+/// # Returns
+/// 1-byte array with torque value, or empty array if None
+pub fn encode_start_calibration(torque: Option<u8>) -> [u8; 1] {
+    [torque.map(|t| t.min(100)).unwrap_or(0)]
+}
+
+/// Encode start calibration command without torque (for firmware use)
+pub fn encode_start_calibration_empty() -> [u8; 0] {
+    []
+}
+
+// ============================================================================
+// Decode Functions (parse response CAN messages into structures)
+// ============================================================================
 
 /// Decode motor status from CAN data
 ///
@@ -223,7 +600,6 @@ pub fn encode_status(speed_rpm: f32, electrical_angle: f32) -> [u8; 8] {
 /// # Returns
 /// * `Some(MotorStatus)` if parsing successful
 /// * `None` if data length is incorrect
-#[allow(dead_code)]
 pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
     if data.len() < 8 {
         return None;
@@ -241,38 +617,6 @@ pub fn decode_status(data: &[u8]) -> Option<MotorStatus> {
     })
 }
 
-/// Encode voltage status into CAN data
-///
-/// # Arguments
-/// * `voltage` - DC bus voltage in volts
-/// * `overvoltage` - Overvoltage flag
-/// * `undervoltage` - Undervoltage flag
-///
-/// # Returns
-/// 5-byte array containing encoded voltage status
-#[allow(dead_code)]
-pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool) -> [u8; 5] {
-    let mut data = [0u8; 5];
-
-    // Encode voltage as little-endian f32 (bytes 0-3)
-    let voltage_bytes = voltage.to_le_bytes();
-    data[0..4].copy_from_slice(&voltage_bytes);
-
-    // Encode flags (byte 4)
-    // Bit 0: overvoltage
-    // Bit 1: undervoltage
-    let mut flags = 0u8;
-    if overvoltage {
-        flags |= 0x01;
-    }
-    if undervoltage {
-        flags |= 0x02;
-    }
-    data[4] = flags;
-
-    data
-}
-
 /// Decode voltage status from CAN data
 ///
 /// # Arguments
@@ -281,7 +625,6 @@ pub fn encode_voltage_status(voltage: f32, overvoltage: bool, undervoltage: bool
 /// # Returns
 /// * `Some(VoltageStatus)` if parsing successful
 /// * `None` if data length is incorrect
-#[allow(dead_code)]
 pub fn decode_voltage_status(data: &[u8]) -> Option<VoltageStatus> {
     if data.len() < 5 {
         return None;
@@ -301,28 +644,6 @@ pub fn decode_voltage_status(data: &[u8]) -> Option<VoltageStatus> {
     })
 }
 
-/// Encode config status into CAN data
-///
-/// # Arguments
-/// * `version` - Config version number
-/// * `crc_valid` - Whether CRC validation passed
-///
-/// # Returns
-/// 3-byte array containing encoded config status
-#[allow(dead_code)]
-pub fn encode_config_status(version: u16, crc_valid: bool) -> [u8; 3] {
-    let mut data = [0u8; 3];
-
-    // Encode version as little-endian u16 (bytes 0-1)
-    let version_bytes = version.to_le_bytes();
-    data[0..2].copy_from_slice(&version_bytes);
-
-    // Encode CRC valid flag (byte 2)
-    data[2] = if crc_valid { 1 } else { 0 };
-
-    data
-}
-
 /// Decode config status from CAN data
 ///
 /// # Arguments
@@ -331,7 +652,6 @@ pub fn encode_config_status(version: u16, crc_valid: bool) -> [u8; 3] {
 /// # Returns
 /// * `Some((version, crc_valid))` if parsing successful
 /// * `None` if data length is incorrect
-#[allow(dead_code)]
 pub fn decode_config_status(data: &[u8]) -> Option<(u16, bool)> {
     if data.len() < 3 {
         return None;
@@ -344,368 +664,15 @@ pub fn decode_config_status(data: &[u8]) -> Option<(u16, bool)> {
     Some((version, crc_valid))
 }
 
-// ============================================================================
-// Motor Control Parameter Commands
-// ============================================================================
-
-/// Parse motor voltage parameters from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 8 bytes)
-///
-/// # Returns
-/// * `Some((max_voltage, v_dc_bus))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_motor_voltage_params(data: &[u8]) -> Option<(f32, f32)> {
-    if data.len() < 8 {
-        error!("Motor voltage params: invalid data length {}", data.len());
-        return None;
-    }
-
-    let max_voltage_bytes = [data[0], data[1], data[2], data[3]];
-    let v_dc_bus_bytes = [data[4], data[5], data[6], data[7]];
-
-    let max_voltage = f32::from_le_bytes(max_voltage_bytes);
-    let v_dc_bus = f32::from_le_bytes(v_dc_bus_bytes);
-
-    info!(
-        "Motor voltage params received: max_voltage={}, v_dc_bus={}",
-        max_voltage, v_dc_bus
-    );
-    Some((max_voltage, v_dc_bus))
-}
-
-/// Encode motor voltage parameters into CAN data
-#[allow(dead_code)]
-pub fn encode_motor_voltage_params(max_voltage: f32, v_dc_bus: f32) -> [u8; 8] {
-    let mut data = [0u8; 8];
-    data[0..4].copy_from_slice(&max_voltage.to_le_bytes());
-    data[4..8].copy_from_slice(&v_dc_bus.to_le_bytes());
-    data
-}
-
-/// Parse motor basic parameters from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 3 bytes)
-///
-/// # Returns
-/// * `Some((pole_pairs, max_duty))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_motor_basic_params(data: &[u8]) -> Option<(u8, u16)> {
-    if data.len() < 3 {
-        error!("Motor basic params: invalid data length {}", data.len());
-        return None;
-    }
-
-    let pole_pairs = data[0];
-    let max_duty_bytes = [data[1], data[2]];
-    let max_duty = u16::from_le_bytes(max_duty_bytes);
-
-    info!(
-        "Motor basic params received: pole_pairs={}, max_duty={}",
-        pole_pairs, max_duty
-    );
-    Some((pole_pairs, max_duty))
-}
-
-/// Encode motor basic parameters into CAN data
-#[allow(dead_code)]
-pub fn encode_motor_basic_params(pole_pairs: u8, max_duty: u16) -> [u8; 3] {
-    let mut data = [0u8; 3];
-    data[0] = pole_pairs;
-    data[1..3].copy_from_slice(&max_duty.to_le_bytes());
-    data
-}
-
-/// Parse hall sensor parameters from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 8 bytes)
-///
-/// # Returns
-/// * `Some((speed_filter_alpha, hall_angle_offset))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_hall_sensor_params(data: &[u8]) -> Option<(f32, f32)> {
-    if data.len() < 8 {
-        error!("Hall sensor params: invalid data length {}", data.len());
-        return None;
-    }
-
-    let alpha_bytes = [data[0], data[1], data[2], data[3]];
-    let offset_bytes = [data[4], data[5], data[6], data[7]];
-
-    let speed_filter_alpha = f32::from_le_bytes(alpha_bytes);
-    let hall_angle_offset = f32::from_le_bytes(offset_bytes);
-
-    info!(
-        "Hall sensor params received: alpha={}, offset={}",
-        speed_filter_alpha, hall_angle_offset
-    );
-    Some((speed_filter_alpha, hall_angle_offset))
-}
-
-/// Encode hall sensor parameters into CAN data
-#[allow(dead_code)]
-pub fn encode_hall_sensor_params(speed_filter_alpha: f32, hall_angle_offset: f32) -> [u8; 8] {
-    let mut data = [0u8; 8];
-    data[0..4].copy_from_slice(&speed_filter_alpha.to_le_bytes());
-    data[4..8].copy_from_slice(&hall_angle_offset.to_le_bytes());
-    data
-}
-
-/// Parse angle interpolation setting from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be at least 1 byte)
-///
-/// # Returns
-/// * `Some(enable)` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_angle_interpolation(data: &[u8]) -> Option<bool> {
-    if data.is_empty() {
-        error!("Angle interpolation: no data");
-        return None;
-    }
-
-    let enable = data[0] != 0;
-    info!("Angle interpolation received: {}", enable);
-    Some(enable)
-}
-
-/// Encode angle interpolation setting into CAN data
-#[allow(dead_code)]
-pub fn encode_angle_interpolation(enable: bool) -> [u8; 1] {
-    [if enable { 1 } else { 0 }]
-}
-
-// ============================================================================
-// OpenLoop Parameter Commands
-// ============================================================================
-
-/// Parse openloop RPM parameters from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 8 bytes)
-///
-/// # Returns
-/// * `Some((initial_rpm, target_rpm))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_openloop_rpm_params(data: &[u8]) -> Option<(f32, f32)> {
-    if data.len() < 8 {
-        error!("OpenLoop RPM params: invalid data length {}", data.len());
-        return None;
-    }
-
-    let initial_bytes = [data[0], data[1], data[2], data[3]];
-    let target_bytes = [data[4], data[5], data[6], data[7]];
-
-    let initial_rpm = f32::from_le_bytes(initial_bytes);
-    let target_rpm = f32::from_le_bytes(target_bytes);
-
-    info!(
-        "OpenLoop RPM params received: initial={}, target={}",
-        initial_rpm, target_rpm
-    );
-    Some((initial_rpm, target_rpm))
-}
-
-/// Encode openloop RPM parameters into CAN data
-#[allow(dead_code)]
-pub fn encode_openloop_rpm_params(initial_rpm: f32, target_rpm: f32) -> [u8; 8] {
-    let mut data = [0u8; 8];
-    data[0..4].copy_from_slice(&initial_rpm.to_le_bytes());
-    data[4..8].copy_from_slice(&target_rpm.to_le_bytes());
-    data
-}
-
-/// Parse openloop acceleration/duty parameters from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 6 bytes)
-///
-/// # Returns
-/// * `Some((acceleration, duty_ratio))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_openloop_accel_duty_params(data: &[u8]) -> Option<(f32, u16)> {
-    if data.len() < 6 {
-        error!(
-            "OpenLoop accel/duty params: invalid data length {}",
-            data.len()
-        );
-        return None;
-    }
-
-    let accel_bytes = [data[0], data[1], data[2], data[3]];
-    let duty_bytes = [data[4], data[5]];
-
-    let acceleration = f32::from_le_bytes(accel_bytes);
-    let duty_ratio = u16::from_le_bytes(duty_bytes);
-
-    info!(
-        "OpenLoop accel/duty params received: accel={}, duty={}",
-        acceleration, duty_ratio
-    );
-    Some((acceleration, duty_ratio))
-}
-
-/// Encode openloop acceleration/duty parameters into CAN data
-#[allow(dead_code)]
-pub fn encode_openloop_accel_duty_params(acceleration: f32, duty_ratio: u16) -> [u8; 6] {
-    let mut data = [0u8; 6];
-    data[0..4].copy_from_slice(&acceleration.to_le_bytes());
-    data[4..6].copy_from_slice(&duty_ratio.to_le_bytes());
-    data
-}
-
-// ============================================================================
-// PWM Configuration Commands
-// ============================================================================
-
-/// Parse PWM configuration from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 6 bytes)
-///
-/// # Returns
-/// * `Some((frequency, dead_time))` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_pwm_config(data: &[u8]) -> Option<(u32, u16)> {
-    if data.len() < 6 {
-        error!("PWM config: invalid data length {}", data.len());
-        return None;
-    }
-
-    let freq_bytes = [data[0], data[1], data[2], data[3]];
-    let dead_time_bytes = [data[4], data[5]];
-
-    let frequency = u32::from_le_bytes(freq_bytes);
-    let dead_time = u16::from_le_bytes(dead_time_bytes);
-
-    info!(
-        "PWM config received: freq={}Hz, dead_time={}",
-        frequency, dead_time
-    );
-    Some((frequency, dead_time))
-}
-
-/// Encode PWM configuration into CAN data
-#[allow(dead_code)]
-pub fn encode_pwm_config(frequency: u32, dead_time: u16) -> [u8; 6] {
-    let mut data = [0u8; 6];
-    data[0..4].copy_from_slice(&frequency.to_le_bytes());
-    data[4..6].copy_from_slice(&dead_time.to_le_bytes());
-    data
-}
-
-// ============================================================================
-// CAN Configuration Commands
-// ============================================================================
-
-/// Parse CAN configuration from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 4 bytes)
-///
-/// # Returns
-/// * `Some(bitrate)` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_can_config(data: &[u8]) -> Option<u32> {
-    if data.len() < 4 {
-        error!("CAN config: invalid data length {}", data.len());
-        return None;
-    }
-
-    let bitrate_bytes = [data[0], data[1], data[2], data[3]];
-    let bitrate = u32::from_le_bytes(bitrate_bytes);
-
-    info!("CAN config received: bitrate={}", bitrate);
-    Some(bitrate)
-}
-
-/// Encode CAN configuration into CAN data
-#[allow(dead_code)]
-pub fn encode_can_config(bitrate: u32) -> [u8; 4] {
-    bitrate.to_le_bytes()
-}
-
-// ============================================================================
-// Control Timing Commands
-// ============================================================================
-
-/// Parse control timing from CAN data
-///
-/// # Arguments
-/// * `data` - CAN frame data (should be 8 bytes)
-///
-/// # Returns
-/// * `Some(control_period_us)` if parsing successful
-/// * `None` if data length is incorrect
-pub fn parse_control_timing(data: &[u8]) -> Option<u64> {
-    if data.len() < 8 {
-        error!("Control timing: invalid data length {}", data.len());
-        return None;
-    }
-
-    let period_bytes = [
-        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-    ];
-    let control_period_us = u64::from_le_bytes(period_bytes);
-
-    info!("Control timing received: {}us", control_period_us);
-    Some(control_period_us)
-}
-
-/// Encode control timing into CAN data
-#[allow(dead_code)]
-pub fn encode_control_timing(control_period_us: u64) -> [u8; 8] {
-    control_period_us.to_le_bytes()
-}
-
-// ============================================================================
-// Calibration Commands
-// ============================================================================
-
-/// Encode calibration status into CAN data
-///
-/// # Arguments
-/// * `electrical_offset` - Electrical offset in radians (0～2π)
-/// * `direction_inversed` - Direction inversion flag
-/// * `success` - Calibration success flag
-///
-/// # Returns
-/// 6-byte array containing encoded calibration status
-#[allow(dead_code)]
-pub fn encode_calibration_status(
-    electrical_offset: f32,
-    direction_inversed: bool,
-    success: bool,
-) -> [u8; 6] {
-    let mut data = [0u8; 6];
-
-    // Encode electrical offset as little-endian f32 (bytes 0-3)
-    let offset_bytes = electrical_offset.to_le_bytes();
-    data[0..4].copy_from_slice(&offset_bytes);
-
-    // Encode direction inversed flag (byte 4)
-    data[4] = if direction_inversed { 1 } else { 0 };
-
-    // Encode success flag (byte 5)
-    data[5] = if success { 1 } else { 0 };
-
-    data
-}
-
 /// Decode calibration status from CAN data
 ///
 /// # Arguments
 /// * `data` - CAN frame data (should be at least 6 bytes)
 ///
 /// # Returns
-/// * `Some((electrical_offset, direction_inversed, success))` if parsing successful
+/// * `Some(CalibrationStatus)` if parsing successful
 /// * `None` if data length is incorrect
-#[allow(dead_code)]
-pub fn decode_calibration_status(data: &[u8]) -> Option<(f32, bool, bool)> {
+pub fn decode_calibration_status(data: &[u8]) -> Option<CalibrationStatus> {
     if data.len() < 6 {
         return None;
     }
@@ -716,7 +683,11 @@ pub fn decode_calibration_status(data: &[u8]) -> Option<(f32, bool, bool)> {
     let direction_inversed = data[4] != 0;
     let success = data[5] != 0;
 
-    Some((electrical_offset, direction_inversed, success))
+    Some(CalibrationStatus {
+        electrical_offset,
+        direction_inversed,
+        success,
+    })
 }
 
 #[cfg(test)]
@@ -724,23 +695,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_speed_command() {
+    fn test_encode_decode_speed_command() {
         let speed = 1234.5f32;
-        let data = speed.to_le_bytes();
-        let parsed = parse_speed_command(&data);
-        assert_eq!(parsed, Some(speed));
+        let encoded = encode_speed_command(speed);
+        let decoded = parse_speed_command(&encoded);
+        assert_eq!(decoded, Some(speed));
     }
 
     #[test]
-    fn test_parse_pi_gains() {
+    fn test_encode_decode_pi_gains() {
         let kp = 0.1f32;
         let ki = 0.01f32;
-        let mut data = [0u8; 8];
-        data[0..4].copy_from_slice(&kp.to_le_bytes());
-        data[4..8].copy_from_slice(&ki.to_le_bytes());
+        let encoded = encode_pi_gains(kp, ki);
+        let decoded = parse_pi_gains(&encoded);
+        assert_eq!(decoded, Some((kp, ki)));
+    }
 
-        let parsed = parse_pi_gains(&data);
-        assert_eq!(parsed, Some((kp, ki)));
+    #[test]
+    fn test_encode_decode_enable_command() {
+        let enable = true;
+        let encoded = encode_enable_command(enable);
+        let decoded = parse_enable_command(&encoded);
+        assert_eq!(decoded, Some(enable));
+
+        let disable = false;
+        let encoded = encode_enable_command(disable);
+        let decoded = parse_enable_command(&encoded);
+        assert_eq!(decoded, Some(disable));
     }
 
     #[test]
@@ -779,6 +760,20 @@ mod tests {
 
         assert_eq!(decoded.0, version);
         assert_eq!(decoded.1, crc_valid);
+    }
+
+    #[test]
+    fn test_encode_decode_calibration_status() {
+        let offset = 1.57f32;
+        let inversed = true;
+        let success = true;
+
+        let encoded = encode_calibration_status(offset, inversed, success);
+        let decoded = decode_calibration_status(&encoded).unwrap();
+
+        assert_eq!(decoded.electrical_offset, offset);
+        assert_eq!(decoded.direction_inversed, inversed);
+        assert_eq!(decoded.success, success);
     }
 
     #[test]
@@ -881,5 +876,26 @@ mod tests {
         let decoded = parse_control_timing(&encoded).unwrap();
 
         assert_eq!(decoded, period);
+    }
+
+    #[test]
+    fn test_parse_invalid_data_length() {
+        // Test with insufficient data length
+        assert_eq!(parse_speed_command(&[0, 1, 2]), None);
+        assert_eq!(parse_pi_gains(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(parse_enable_command(&[]), None);
+        assert_eq!(parse_motor_voltage_params(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(parse_motor_basic_params(&[0, 1]), None);
+        assert_eq!(parse_hall_sensor_params(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(parse_angle_interpolation(&[]), None);
+        assert_eq!(parse_openloop_rpm_params(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(parse_openloop_accel_duty_params(&[0, 1, 2, 3, 4]), None);
+        assert_eq!(parse_pwm_config(&[0, 1, 2, 3, 4]), None);
+        assert_eq!(parse_can_config(&[0, 1, 2]), None);
+        assert_eq!(parse_control_timing(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(decode_status(&[0, 1, 2, 3, 4, 5, 6]), None);
+        assert_eq!(decode_voltage_status(&[0, 1, 2, 3]), None);
+        assert_eq!(decode_config_status(&[0, 1]), None);
+        assert_eq!(decode_calibration_status(&[0, 1, 2, 3, 4]), None);
     }
 }

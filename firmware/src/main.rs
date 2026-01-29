@@ -2,7 +2,6 @@
 #![no_main]
 
 mod benchmark;
-mod can_protocol;
 mod config;
 mod fmt;
 mod foc;

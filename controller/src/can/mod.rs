@@ -1,7 +1,6 @@
 pub mod manager;
-pub mod protocol;
 pub mod setup;
 
+pub use g4_driver_protocol::*;
 pub use manager::*;
-pub use protocol::*;
 pub use setup::*;

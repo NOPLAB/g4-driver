@@ -10,15 +10,15 @@ use embassy_stm32::{
 use embassy_time::{Duration, Ticker};
 use embedded_can::Id;
 
-use crate::can_protocol::{
+use crate::config;
+use crate::fmt::*;
+use crate::state::{self, SYSTEM_CONTEXT};
+use g4_driver_protocol::{
     can_ids, parse_angle_interpolation, parse_can_config, parse_control_timing,
     parse_enable_command, parse_hall_sensor_params, parse_motor_basic_params,
     parse_motor_voltage_params, parse_openloop_accel_duty_params, parse_openloop_rpm_params,
     parse_pi_gains, parse_pwm_config, parse_speed_command,
 };
-use crate::config;
-use crate::fmt::*;
-use crate::state::{self, SYSTEM_CONTEXT};
 
 /// CAN通信タスク - モーター制御コマンド処理とステータス送信
 #[embassy_executor::task]

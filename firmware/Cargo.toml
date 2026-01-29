@@ -6,6 +6,7 @@ name = "g4-driver-firmware"
 version = "0.1.0"
 
 [dependencies]
+g4-driver-protocol = { path = "../protocol", features = ["defmt"] }
 cortex-m = { version = "0.7.7", features = [
     "inline-asm",
     "critical-section-single-core",
@@ -40,18 +41,6 @@ name = "g4-driver"
 path = "src/main.rs"
 test = false
 bench = false
-
-[profile.dev]
-debug = true
-lto = true
-opt-level = "z"
-incremental = true
-
-[profile.release]
-debug = false
-lto = true
-opt-level = 2
-incremental = true
 
 [features]
 defmt = ["dep:defmt"]
