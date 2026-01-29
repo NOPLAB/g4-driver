@@ -1,36 +1,36 @@
-//! フラックス弱め制御
+//! Flux weakening control
 //!
-//! 高速域でd軸に負の電圧を印加することで、逆起電力を抑制し
-//! モーターの最高回転数を向上させます。
+//! At high speeds, apply negative voltage to d-axis to suppress back EMF
+//! and improve the motor's maximum speed.
 //!
-//! 電流センシングがないため、速度ベースのフィードフォワード方式で実装。
+//! Since there is no current sensing, this is implemented as a speed-based feedforward method.
 
 use libm::sqrtf;
 
-/// フラックス弱め制御器
+/// Flux weakening controller
 pub struct FluxWeakeningController {
-    /// 制御有効/無効
+    /// Control enabled/disabled
     enabled: bool,
-    /// 弱め制御開始速度 [RPM]
+    /// Weakening start speed [RPM]
     min_speed: f32,
-    /// 最大弱め速度 [RPM]
+    /// Maximum weakening speed [RPM]
     max_speed: f32,
-    /// 最大弱め率 (0.0-1.0)
+    /// Maximum weakening ratio (0.0-1.0)
     max_weakening_ratio: f32,
-    /// Vdレート制限 [V/s]
+    /// Vd rate limit [V/s]
     vd_rate_limit: f32,
-    /// 現在のVd値 [V]（レート制限用）
+    /// Current Vd value [V] (for rate limiting)
     current_vd: f32,
 }
 
 impl FluxWeakeningController {
-    /// 新規作成
+    /// Create new instance
     ///
-    /// # 引数
-    /// * `min_speed` - 弱め制御開始速度 [RPM]
-    /// * `max_speed` - 最大弱め速度 [RPM]
-    /// * `max_weakening_ratio` - 最大弱め率 (0.0-1.0)
-    /// * `vd_rate_limit` - Vdレート制限 [V/s]
+    /// # Arguments
+    /// * `min_speed` - Weakening start speed [RPM]
+    /// * `max_speed` - Maximum weakening speed [RPM]
+    /// * `max_weakening_ratio` - Maximum weakening ratio (0.0-1.0)
+    /// * `vd_rate_limit` - Vd rate limit [V/s]
     pub fn new(
         min_speed: f32,
         max_speed: f32,
@@ -47,32 +47,32 @@ impl FluxWeakeningController {
         }
     }
 
-    /// 制御の有効/無効を設定
+    /// Set control enabled/disabled
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// 制御が有効かどうかを返す
+    /// Return whether control is enabled
     #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// 内部状態をリセット
+    /// Reset internal state
     pub fn reset(&mut self) {
         self.current_vd = 0.0;
     }
 
-    /// 速度に応じたd軸電圧を計算
+    /// Calculate d-axis voltage according to speed
     ///
-    /// # 引数
-    /// * `speed_rpm` - 現在の速度 [RPM]
-    /// * `vq` - q軸電圧指令 [V]
-    /// * `v_dc` - DCバス電圧 [V]
-    /// * `dt` - 制御周期 [s]
+    /// # Arguments
+    /// * `speed_rpm` - Current speed [RPM]
+    /// * `vq` - q-axis voltage command [V]
+    /// * `v_dc` - DC bus voltage [V]
+    /// * `dt` - Control period [s]
     ///
-    /// # 戻り値
-    /// d軸電圧指令 [V]（負の値）
+    /// # Returns
+    /// d-axis voltage command [V] (negative value)
     pub fn calculate_vd(&mut self, speed_rpm: f32, vq: f32, v_dc: f32, dt: f32) -> f32 {
         if !self.enabled {
             self.current_vd = 0.0;
@@ -81,13 +81,13 @@ impl FluxWeakeningController {
 
         let speed_abs = speed_rpm.abs();
 
-        // 弱め制御開始速度以下では弱めなし
+        // No weakening below start speed
         if speed_abs < self.min_speed {
-            // レート制限を適用して0に戻す
+            // Apply rate limit and return to 0
             return self.apply_rate_limit(0.0, dt);
         }
 
-        // 速度に応じた弱め率を計算（線形補間）
+        // Calculate weakening ratio according to speed (linear interpolation)
         let speed_range = self.max_speed - self.min_speed;
         let weakening_ratio = if speed_range > 0.0 {
             let ratio = (speed_abs - self.min_speed) / speed_range;
@@ -96,8 +96,8 @@ impl FluxWeakeningController {
             0.0
         };
 
-        // 利用可能なd軸電圧の計算
-        // |Vd|^2 + |Vq|^2 <= Vdc^2 より、Vd_max = sqrt(Vdc^2 - Vq^2)
+        // Calculate available d-axis voltage
+        // |Vd|^2 + |Vq|^2 <= Vdc^2, so Vd_max = sqrt(Vdc^2 - Vq^2)
         let vq_abs = vq.abs();
         let vd_available = if vq_abs < v_dc {
             sqrtf(v_dc * v_dc - vq_abs * vq_abs)
@@ -105,14 +105,14 @@ impl FluxWeakeningController {
             0.0
         };
 
-        // 目標Vd（負の値、弱め率に応じて）
+        // Target Vd (negative value, according to weakening ratio)
         let target_vd = -vd_available * weakening_ratio;
 
-        // レート制限を適用
+        // Apply rate limit
         self.apply_rate_limit(target_vd, dt)
     }
 
-    /// レート制限を適用してVdを更新
+    /// Apply rate limit and update Vd
     fn apply_rate_limit(&mut self, target_vd: f32, dt: f32) -> f32 {
         let max_delta = self.vd_rate_limit * dt;
         let delta = target_vd - self.current_vd;
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_disabled() {
         let mut fw = FluxWeakeningController::new(2000.0, 4000.0, 0.5, 100.0);
-        // 無効時は常に0
+        // When disabled, always 0
         let vd = fw.calculate_vd(3000.0, 10.0, 24.0, 0.0001);
         assert_eq!(vd, 0.0);
     }
@@ -148,7 +148,7 @@ mod tests {
         let mut fw = FluxWeakeningController::new(2000.0, 4000.0, 0.5, 100.0);
         fw.set_enabled(true);
 
-        // 弱め開始速度以下ではVd = 0
+        // Below weakening start speed, Vd = 0
         let vd = fw.calculate_vd(1000.0, 10.0, 24.0, 0.001);
         assert_eq!(vd, 0.0);
     }
@@ -158,14 +158,14 @@ mod tests {
         let mut fw = FluxWeakeningController::new(2000.0, 4000.0, 0.5, 1000.0);
         fw.set_enabled(true);
 
-        // 中間速度（3000 RPM）では弱め率 = 0.5 * (3000-2000)/(4000-2000) = 0.25
-        // 十分な時間をかけて目標に到達させる
+        // At mid speed (3000 RPM), weakening ratio = 0.5 * (3000-2000)/(4000-2000) = 0.25
+        // Allow enough time to reach target
         for _ in 0..100 {
             fw.calculate_vd(3000.0, 10.0, 24.0, 0.01);
         }
         let vd = fw.calculate_vd(3000.0, 10.0, 24.0, 0.01);
 
-        // Vdは負の値
+        // Vd is negative
         assert!(vd < 0.0);
     }
 
@@ -174,13 +174,13 @@ mod tests {
         let mut fw = FluxWeakeningController::new(2000.0, 4000.0, 0.5, 10.0);
         fw.set_enabled(true);
 
-        // レート制限10V/s、dt=0.1sで最大1Vしか変化しない
+        // Rate limit 10V/s, dt=0.1s, max change is 1V
         let vd1 = fw.calculate_vd(4000.0, 10.0, 24.0, 0.1);
         assert!(vd1 >= -1.1 && vd1 <= 0.0);
 
-        // 2回目も同様にレート制限
+        // Second call also rate limited
         let vd2 = fw.calculate_vd(4000.0, 10.0, 24.0, 0.1);
         assert!(vd2 >= -2.1 && vd2 <= 0.0);
-        assert!(vd2 < vd1); // より負方向へ
+        assert!(vd2 < vd1); // More negative
     }
 }

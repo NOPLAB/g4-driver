@@ -3,7 +3,7 @@
 //! Wraps the TIM4-based Hall sensor interface for use with the bldc crate.
 
 use bldc::sensors::hall::{HallConfig, HallProcessor, HallResult};
-use bldc::traits::{PositionSensor, SpeedSensor};
+use bldc::traits::{HallStateReader, PositionSensor, SpeedSensor};
 
 use crate::config::advance_angle::{
     BASE_ADVANCE_DEG, MAX_ADVANCE_DEG, MAX_SPEED_FOR_ADVANCE, MIN_SPEED_FOR_ADVANCE,
@@ -158,5 +158,23 @@ impl SpeedSensor for HallSensorAdapter {
 
     fn speed_rpm(&self) -> f32 {
         self.last_result.speed_rpm
+    }
+}
+
+impl HallStateReader for HallSensorAdapter {
+    fn get_hall_state(&self) -> u8 {
+        hall_tim::get_hall_state()
+    }
+}
+
+/// Simple Hall state reader that directly reads from TIM4 hardware
+///
+/// This is a zero-sized type that provides HallStateReader implementation
+/// without requiring a full HallSensorAdapter.
+pub struct HallStateReaderAdapter;
+
+impl HallStateReader for HallStateReaderAdapter {
+    fn get_hall_state(&self) -> u8 {
+        hall_tim::get_hall_state()
     }
 }

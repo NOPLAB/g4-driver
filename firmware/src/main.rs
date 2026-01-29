@@ -2,7 +2,6 @@
 #![no_main]
 
 mod adapters;
-mod benchmark;
 mod config;
 mod fmt;
 mod foc;

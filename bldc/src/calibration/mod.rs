@@ -1,51 +1,57 @@
-//! モーター自動キャリブレーションモジュール
+//! Motor auto-calibration module
 //!
-//! このモジュールは、モーターの電気角オフセットと回転方向を
-//! 自動的に検出するキャリブレーション機能を提供します。
+//! This module provides calibration functionality to automatically detect
+//! motor electrical angle offset and rotation direction.
 //!
-//! モジュール構造:
-//! - sector_sampler: Hallセクターごとの角度サンプリング
-//! - offset_calc: 電気角オフセット計算
+//! Module structure:
+//! - sector_sampler: Angle sampling for each Hall sector
+//! - offset_calc: Electrical angle offset calculation
 
 mod offset_calc;
 mod sector_sampler;
 
-use super::shaft_position::ShaftPosition;
-use crate::fmt::*;
-use crate::hall_tim;
+use crate::position::ShaftPosition;
+use crate::traits::HallStateReader;
 use core::f32::consts::TAU;
 
-use offset_calc::calculate_electrical_offset;
-use sector_sampler::SectorSampler;
+pub use offset_calc::calculate_electrical_offset;
+pub use sector_sampler::SectorSampler;
 
-/// キャリブレーション状態
+/// Calibration error
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CalibrationError {
+    /// Motor did not move during calibration
+    MotorNotMoving,
+}
+
+/// Calibration state
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CalibrationState {
-    /// 初期化状態
+    /// Initialization state
     Init,
-    /// 回転方向検出中（モーター方向とセンサー方向の関係を確認）
+    /// Detecting rotation direction (checking relationship between motor and sensor direction)
     FindDirection,
-    /// 各Hallセクターでの角度測定中
+    /// Measuring angle at each Hall sector
     MeasureSectors,
-    /// 開始位置に戻る
+    /// Returning to start position
     ReturnToStart,
-    /// キャリブレーション完了
+    /// Calibration complete
     Completed,
 }
 
-/// キャリブレーション結果
+/// Calibration result
 #[derive(Debug, Clone, Copy)]
 pub struct CalibrationResult {
-    /// 電気角オフセット [rad]（0～2π）
+    /// Electrical angle offset [rad] (0 to 2π)
     pub electrical_offset: f32,
-    /// センサー方向反転フラグ（true: モーターと逆方向、false: 同方向）
+    /// Sensor direction inversion flag (true: opposite to motor, false: same direction)
     pub direction_inversed: bool,
-    /// キャリブレーション成功フラグ
+    /// Calibration success flag
     pub success: bool,
 }
 
 impl CalibrationResult {
-    /// 新しいキャリブレーション結果を作成（失敗状態）
+    /// Create new calibration result (failed state)
     pub fn new() -> Self {
         Self {
             electrical_offset: 0.0,
@@ -61,35 +67,35 @@ impl Default for CalibrationResult {
     }
 }
 
-/// モーター自動キャリブレーション
+/// Motor auto-calibration
 pub struct MotorCalibration {
-    /// 現在の状態
+    /// Current state
     state: CalibrationState,
-    /// 極対数
+    /// Pole pairs
     pole_pairs: u8,
-    /// トルク（0.0～1.0）
+    /// Torque (0.0 to 1.0)
     torque: f32,
-    /// 要求シャフト位置
+    /// Requested shaft position
     shaft_position_req: ShaftPosition,
-    /// 実際のシャフト位置
+    /// Actual shaft position
     shaft_position_act: ShaftPosition,
-    /// キャリブレーション結果
+    /// Calibration result
     result: CalibrationResult,
-    /// セクターサンプラー
+    /// Sector sampler
     sector_sampler: SectorSampler,
 }
 
 impl MotorCalibration {
-    /// 新しいモーターキャリブレーションを作成
+    /// Create new motor calibration
     ///
-    /// # 引数
-    /// * `pole_pairs` - モーターの極対数
-    /// * `torque` - キャリブレーション用トルク（0.0～1.0、推奨: 0.15～0.25）
+    /// # Arguments
+    /// * `pole_pairs` - Motor pole pairs
+    /// * `torque` - Calibration torque (0.0 to 1.0, recommended: 0.15 to 0.25)
     pub fn new(pole_pairs: u8, torque: f32) -> Self {
         Self {
             state: CalibrationState::Init,
             pole_pairs,
-            torque: torque.clamp(0.1, 0.5), // 安全のため0.1～0.5に制限
+            torque: torque.clamp(0.1, 0.5), // Limit to 0.1 to 0.5 for safety
             shaft_position_req: ShaftPosition::new(),
             shaft_position_act: ShaftPosition::new(),
             result: CalibrationResult::new(),
@@ -97,12 +103,8 @@ impl MotorCalibration {
         }
     }
 
-    /// キャリブレーションを開始
+    /// Start calibration
     pub fn start(&mut self) {
-        info!("Starting motor calibration...");
-        info!("  Pole pairs: {}", self.pole_pairs);
-        info!("  Torque: {}", self.torque);
-
         self.state = CalibrationState::Init;
         self.shaft_position_req.reset();
         self.shaft_position_act.reset();
@@ -110,142 +112,135 @@ impl MotorCalibration {
         self.sector_sampler.reset();
     }
 
-    /// 現在の状態を取得
+    /// Get current state
     #[allow(dead_code)]
     pub fn get_state(&self) -> CalibrationState {
         self.state
     }
 
-    /// キャリブレーション結果を取得
+    /// Get calibration result
     pub fn get_result(&self) -> CalibrationResult {
         self.result
     }
 
-    /// キャリブレーションが完了したかチェック
+    /// Check if calibration is completed
     pub fn is_completed(&self) -> bool {
         self.state == CalibrationState::Completed
     }
 
-    /// キャリブレーションステートマシンを更新
+    /// Update calibration state machine
     ///
-    /// # 引数
-    /// * `sensor_angle` - センサーから取得した角度 [rad]
+    /// # Arguments
+    /// * `sensor_angle` - Angle from sensor [rad]
+    /// * `hall_reader` - Hall state reader implementation
     ///
-    /// # 戻り値
-    /// * `Ok((electrical_angle, torque))` - 電気角[rad]とトルク（0.0～1.0）
-    /// * `Err(())` - エラー（モーターが動かなかった等）
-    pub fn update(&mut self, sensor_angle: f32) -> Result<(f32, f32), ()> {
-        // 実際のシャフト位置を更新
+    /// # Returns
+    /// * `Ok((electrical_angle, torque))` - Electrical angle [rad] and torque (0.0 to 1.0)
+    /// * `Err(CalibrationError)` - Error (motor did not move, etc.)
+    pub fn update<H: HallStateReader>(
+        &mut self,
+        sensor_angle: f32,
+        hall_reader: &H,
+    ) -> Result<(f32, f32), CalibrationError> {
+        // Update actual shaft position
         self.shaft_position_act.update_shaft_angle(sensor_angle);
 
         match self.state {
             CalibrationState::Init => self.handle_init(),
             CalibrationState::FindDirection => self.handle_find_direction(),
-            CalibrationState::MeasureSectors => self.handle_measure_sectors(),
+            CalibrationState::MeasureSectors => self.handle_measure_sectors(hall_reader),
             CalibrationState::ReturnToStart => self.handle_return_to_start(),
             CalibrationState::Completed => Ok((0.0, 0.0)),
         }
     }
 
-    /// トルクを設定
+    /// Set torque
     #[allow(dead_code)]
     pub fn set_torque(&mut self, torque: f32) {
         self.torque = torque.clamp(0.1, 0.5);
     }
 
-    // === 状態ハンドラー ===
+    // === State handlers ===
 
-    fn handle_init(&mut self) -> Result<(f32, f32), ()> {
-        info!("Calibration: Init");
+    fn handle_init(&mut self) -> Result<(f32, f32), CalibrationError> {
         self.shaft_position_req.reset();
         self.shaft_position_act.reset();
         self.result.electrical_offset = 0.0;
         self.sector_sampler.reset();
         self.state = CalibrationState::FindDirection;
-        info!("Calibration: Init -> FindDirection");
         Ok((0.0, 0.0))
     }
 
-    fn handle_find_direction(&mut self) -> Result<(f32, f32), ()> {
-        // 目標: 1回転以上（1電気角回転）
+    fn handle_find_direction(&mut self) -> Result<(f32, f32), CalibrationError> {
+        // Target: 1 or more rotations (1 electrical angle rotation)
         if self.shaft_position_req.rotations >= 1 {
-            // モーターが動いたかチェック
+            // Check if motor moved
             if self.shaft_position_act.rotations == 0 && self.shaft_position_act.angle < 0.1 {
-                error!("Calibration failed: Motor did not move");
                 self.state = CalibrationState::Completed;
                 self.result.success = false;
-                return Err(());
+                return Err(CalibrationError::MotorNotMoving);
             }
 
-            // 回転方向をチェック
+            // Check rotation direction
             let actual_position = self.shaft_position_act.get_position();
             if actual_position < 0.0 {
-                // センサーが逆方向
-                info!("Direction: INVERSED (sensor is reversed)");
+                // Sensor is reversed
                 self.shaft_position_act.set_inversed(true);
                 self.result.direction_inversed = true;
             } else {
-                info!("Direction: NORMAL");
                 self.shaft_position_act.set_inversed(false);
                 self.result.direction_inversed = false;
             }
 
             self.state = CalibrationState::MeasureSectors;
-            info!("Calibration: FindDirection -> MeasureSectors");
         } else {
-            // ゆっくり回転（2.5 rad/s ≈ 24 RPM）
-            // 10kHz更新なので、1ステップあたり: 2.5 / 10000 = 0.00025 rad
+            // Slow rotation (2.5 rad/s ≈ 24 RPM)
+            // At 10kHz update, per step: 2.5 / 10000 = 0.00025 rad
             self.shaft_position_req.increment(0.00025);
         }
 
-        // 要求位置の電気角を返す（オフセット未適用）
+        // Return requested position electrical angle (without offset)
         let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
         Ok((electrical_angle, self.torque))
     }
 
-    fn handle_measure_sectors(&mut self) -> Result<(f32, f32), ()> {
-        // 現在のHallセクターを取得（1-6）
-        let current_hall = hall_tim::get_hall_state();
+    fn handle_measure_sectors<H: HallStateReader>(
+        &mut self,
+        hall_reader: &H,
+    ) -> Result<(f32, f32), CalibrationError> {
+        // Get current Hall sector (1-6)
+        let current_hall = hall_reader.get_hall_state();
 
-        // 有効なHallセクターでサンプリング
+        // Sample at valid Hall sector
         if (1..=6).contains(&current_hall) {
             let angle = self.shaft_position_act.get_angle();
             self.sector_sampler.record_sample(current_hall, angle);
 
-            // 全セクターの角度が記録されたかチェック
+            // Check if all sector angles are recorded
             if self.sector_sampler.is_complete() {
-                // オフセットを計算
+                // Calculate offset
                 self.result.electrical_offset =
                     calculate_electrical_offset(self.sector_sampler.get_angles(), self.pole_pairs);
                 self.state = CalibrationState::ReturnToStart;
-                info!("Calibration: MeasureSectors -> ReturnToStart");
             }
         }
 
-        // 引き続きゆっくり回転
+        // Continue slow rotation
         self.shaft_position_req.increment(0.00025);
 
         let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
         Ok((electrical_angle, self.torque))
     }
 
-    fn handle_return_to_start(&mut self) -> Result<(f32, f32), ()> {
-        // 目標: 0回転、角度 < π/2
+    fn handle_return_to_start(&mut self) -> Result<(f32, f32), CalibrationError> {
+        // Target: 0 rotations, angle < π/2
         if self.shaft_position_req.rotations == 0 && self.shaft_position_req.angle < TAU / 4.0 {
-            info!("Calibration completed successfully!");
-            info!(
-                "  Electrical offset: {} rad ({} deg)",
-                self.result.electrical_offset,
-                self.result.electrical_offset * 180.0 / core::f32::consts::PI
-            );
-            info!("  Direction inversed: {}", self.result.direction_inversed);
-
             self.state = CalibrationState::Completed;
             self.result.success = true;
-            Ok((0.0, 0.0)) // トルク0で停止
+            Ok((0.0, 0.0)) // Stop with torque 0
         } else {
-            // 逆方向に回転（開始位置に戻る）- ゆっくり
-            // 10kHz更新なので、1ステップあたり: 5.0 / 10000 = 0.0005 rad
+            // Rotate in reverse direction (return to start position) - slowly
+            // At 10kHz update, per step: 5.0 / 10000 = 0.0005 rad
             self.shaft_position_req.increment(-0.0005);
 
             let electrical_angle = self.shaft_position_req.get_angle() * self.pole_pairs as f32;
@@ -257,6 +252,16 @@ impl MotorCalibration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct MockHallReader {
+        state: u8,
+    }
+
+    impl HallStateReader for MockHallReader {
+        fn get_hall_state(&self) -> u8 {
+            self.state
+        }
+    }
 
     #[test]
     fn test_calibration_new() {
@@ -275,10 +280,21 @@ mod tests {
 
     #[test]
     fn test_torque_clamping() {
-        let mut cal = MotorCalibration::new(6, 0.8); // 0.8は高すぎる
+        let mut cal = MotorCalibration::new(6, 0.8); // 0.8 is too high
         assert!(cal.torque <= 0.5);
 
-        cal.set_torque(0.05); // 0.05は低すぎる
+        cal.set_torque(0.05); // 0.05 is too low
         assert!(cal.torque >= 0.1);
+    }
+
+    #[test]
+    fn test_init_transitions_to_find_direction() {
+        let mut cal = MotorCalibration::new(6, 0.2);
+        let hall_reader = MockHallReader { state: 1 };
+        cal.start();
+
+        // First update should transition from Init to FindDirection
+        let _ = cal.update(0.0, &hall_reader);
+        assert_eq!(cal.get_state(), CalibrationState::FindDirection);
     }
 }

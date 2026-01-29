@@ -6,7 +6,7 @@ name = "g4-driver-firmware"
 version = "0.1.0"
 
 [dependencies]
-bldc = { path = "../bldc", default-features = false, features = ["hall"] }
+bldc = { path = "../bldc", default-features = false, features = ["hall", "calibration"] }
 g4-driver-protocol = { path = "../protocol", features = ["defmt"] }
 cortex-m = { version = "0.7.7", features = [
     "inline-asm",

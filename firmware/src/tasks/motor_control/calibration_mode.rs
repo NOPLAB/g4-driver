@@ -5,6 +5,7 @@
 use core::f32::consts::PI;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::adapters::HallStateReaderAdapter;
 use crate::config::*;
 use crate::fmt::*;
 // Use bldc crate for portable algorithms
@@ -51,8 +52,9 @@ pub async fn execute(
         );
     }
 
-    // キャリブレーションステートマシンを更新
-    match calibration.update(sensor_angle) {
+    // キャリブレーションステートマシンを更新（HallStateReaderアダプターを使用）
+    let hall_reader = HallStateReaderAdapter;
+    match calibration.update(sensor_angle, &hall_reader) {
         Ok((electrical_angle, torque)) => {
             // トルクから電圧指令を計算（トルク 0.0～1.0 → 電圧 0～MAX_VOLTAGE）
             let v_cmd = torque * DEFAULT_MAX_VOLTAGE;

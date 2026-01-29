@@ -3,6 +3,14 @@
 //! These traits define the interface between the motor control algorithms
 //! and the hardware-specific implementations.
 
+/// Hall state reader trait for reading Hall sensor state
+///
+/// This trait is used by the calibration module to read the current Hall sector.
+pub trait HallStateReader {
+    /// Get the current Hall state (1-6 for valid states)
+    fn get_hall_state(&self) -> u8;
+}
+
 /// Position sensor trait for reading rotor position
 pub trait PositionSensor {
     /// Get the electrical angle in radians (0.0 to 2*PI)

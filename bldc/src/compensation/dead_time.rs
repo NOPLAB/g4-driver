@@ -1,30 +1,30 @@
-//! デッドタイム補償
+//! Dead time compensation
 //!
-//! PWMスイッチングのデッドタイムによる電圧歪みを補償します。
-//! 電流センシングがないため、電気角とVq指令の符号から各相の電流方向を推定し、
-//! Duty比を補正します。
+//! Compensates for voltage distortion caused by PWM switching dead time.
+//! Since there is no current sensing, the current direction of each phase is estimated
+//! from the electrical angle and Vq command sign, and the duty ratio is corrected.
 
 use libm::sinf;
 
-/// デッドタイム補償器
+/// Dead time compensator
 pub struct DeadTimeCompensation {
-    /// 補償有効/無効
+    /// Compensation enabled/disabled
     enabled: bool,
-    /// 補償量（Duty換算、事前計算）
+    /// Compensation amount (duty equivalent, pre-calculated)
     compensation_duty: u16,
 }
 
 impl DeadTimeCompensation {
-    /// 新規作成
+    /// Create new instance
     ///
-    /// # 引数
-    /// * `dead_time_ns` - デッドタイム [ns]
-    /// * `pwm_freq_hz` - PWM周波数 [Hz]
-    /// * `v_dc` - DCバス電圧 [V]
-    /// * `max_duty` - 最大Duty値
+    /// # Arguments
+    /// * `dead_time_ns` - Dead time [ns]
+    /// * `pwm_freq_hz` - PWM frequency [Hz]
+    /// * `_v_dc` - DC bus voltage [V] (reserved for future use)
+    /// * `max_duty` - Maximum duty value
     pub fn new(dead_time_ns: f32, pwm_freq_hz: u32, _v_dc: f32, max_duty: u16) -> Self {
-        // デッドタイムによる電圧損失をDuty比に換算
-        // Vdrop = Vdc * Td * Fpwm * 2 (上下アーム両方のデッドタイム)
+        // Convert dead time voltage loss to duty ratio
+        // Vdrop = Vdc * Td * Fpwm * 2 (dead time for both upper and lower arms)
         // duty_compensation = Vdrop / Vdc * max_duty = Td * Fpwm * 2 * max_duty
         let dead_time_s = dead_time_ns * 1e-9;
         let compensation_ratio = dead_time_s * pwm_freq_hz as f32 * 2.0;
@@ -36,27 +36,27 @@ impl DeadTimeCompensation {
         }
     }
 
-    /// 補償の有効/無効を設定
+    /// Set compensation enabled/disabled
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// 補償が有効かどうかを返す
+    /// Return whether compensation is enabled
     #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// デッドタイム補償を適用
+    /// Apply dead time compensation
     ///
-    /// # 引数
-    /// * `duty_u`, `duty_v`, `duty_w` - 補償前のDuty値
-    /// * `vq` - q軸電圧指令（電流方向推定用）
-    /// * `theta` - 電気角 [rad]
-    /// * `max_duty` - 最大Duty値
+    /// # Arguments
+    /// * `duty_u`, `duty_v`, `duty_w` - Duty values before compensation
+    /// * `vq` - q-axis voltage command (for current direction estimation)
+    /// * `theta` - Electrical angle [rad]
+    /// * `max_duty` - Maximum duty value
     ///
-    /// # 戻り値
-    /// 補償後のDuty値 (duty_u, duty_v, duty_w)
+    /// # Returns
+    /// Compensated duty values (duty_u, duty_v, duty_w)
     pub fn compensate(
         &self,
         duty_u: u16,
@@ -70,20 +70,20 @@ impl DeadTimeCompensation {
             return (duty_u, duty_v, duty_w);
         }
 
-        // 電流方向推定（Vqの符号と電気角から各相の電流方向を推定）
-        // Vq > 0 の場合、q軸電流は正方向 → 各相電流は sin(theta), sin(theta - 2π/3), sin(theta + 2π/3)
-        // Vq < 0 の場合、符号反転
+        // Current direction estimation (estimate each phase current direction from Vq sign and electrical angle)
+        // When Vq > 0, q-axis current is positive → each phase current is sin(theta), sin(theta - 2π/3), sin(theta + 2π/3)
+        // When Vq < 0, sign is inverted
         let vq_sign = if vq >= 0.0 { 1.0 } else { -1.0 };
 
-        // 各相の電流方向を推定（sin値の符号で判定）
+        // Estimate current direction of each phase (determined by sign of sin value)
         let phase_offset = core::f32::consts::FRAC_PI_3 * 2.0; // 2π/3
         let i_u_sign = sinf(theta) * vq_sign;
         let i_v_sign = sinf(theta - phase_offset) * vq_sign;
         let i_w_sign = sinf(theta + phase_offset) * vq_sign;
 
-        // 電流方向に基づいて補償を適用
-        // 電流が正（ハイサイドからローサイドへ）: デッドタイムで電圧低下 → Duty増加
-        // 電流が負（ローサイドからハイサイドへ）: デッドタイムで電圧上昇 → Duty減少
+        // Apply compensation based on current direction
+        // Current positive (high side to low side): dead time causes voltage drop → increase duty
+        // Current negative (low side to high side): dead time causes voltage rise → decrease duty
         let comp = self.compensation_duty as i32;
 
         let new_duty_u = if i_u_sign > 0.0 {
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn test_compensation_disabled() {
         let comp = DeadTimeCompensation::new(100.0, 50000, 24.0, 1000);
-        // 無効時は入力をそのまま返す
+        // When disabled, return input as is
         let (u, v, w) = comp.compensate(500, 500, 500, 10.0, 0.0, 1000);
         assert_eq!((u, v, w), (500, 500, 500));
     }
@@ -131,17 +131,17 @@ mod tests {
         let mut comp = DeadTimeCompensation::new(100.0, 50000, 24.0, 1000);
         comp.set_enabled(true);
 
-        // theta = 0, Vq > 0 の場合
-        // i_u: sin(0) = 0 → 補償なし
-        // i_v: sin(-2π/3) < 0 → Duty減少
-        // i_w: sin(+2π/3) > 0 → Duty増加
+        // When theta = 0, Vq > 0
+        // i_u: sin(0) = 0 → no compensation
+        // i_v: sin(-2π/3) < 0 → decrease duty
+        // i_w: sin(+2π/3) > 0 → increase duty
         let (u, v, w) = comp.compensate(500, 500, 500, 10.0, 0.0, 1000);
 
-        // U相はsin(0)≈0なので変化なし
+        // U phase sin(0)≈0 so no change
         assert_eq!(u, 500);
-        // V相は減少
+        // V phase decreases
         assert!(v < 500);
-        // W相は増加
+        // W phase increases
         assert!(w > 500);
     }
 
@@ -150,7 +150,7 @@ mod tests {
         let mut comp = DeadTimeCompensation::new(1000.0, 50000, 24.0, 100);
         comp.set_enabled(true);
 
-        // 極端な補償値でもクランプされる
+        // Even with extreme compensation values, clamp is applied
         let (u, v, w) = comp.compensate(95, 5, 50, 10.0, 0.5, 100);
         assert!(u <= 100);
         assert!(v <= 100);

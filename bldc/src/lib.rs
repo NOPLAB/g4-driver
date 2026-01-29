@@ -6,6 +6,7 @@
 //! # Features
 //!
 //! - `hall` (default): Hall sensor support
+//! - `calibration`: Motor calibration support
 //! - `encoder`: Encoder support (planned)
 //! - `sensorless`: Sensorless control support (planned)
 //! - `std`: Standard library support for PC simulation/testing
@@ -19,6 +20,9 @@
 //! - [`modulation`]: PWM modulation strategies (SVPWM)
 //! - [`sensors`]: Sensor processing algorithms (Hall sensor)
 //! - [`transforms`]: Coordinate transformations (Park, Clarke)
+//! - [`position`]: Shaft position tracking
+//! - [`compensation`]: Compensation algorithms (dead time, flux weakening)
+//! - [`calibration`]: Motor calibration (requires `calibration` feature)
 //!
 //! # Example
 //!
@@ -40,13 +44,19 @@
 #![no_std]
 #![deny(unsafe_code)]
 
+#[cfg(feature = "calibration")]
+pub mod calibration;
+pub mod compensation;
 pub mod control;
 pub mod modulation;
+pub mod position;
 #[cfg(feature = "hall")]
 pub mod sensors;
 pub mod traits;
 pub mod transforms;
 
 // Re-export commonly used types
+pub use compensation::{DeadTimeCompensation, FluxWeakeningController};
 pub use control::PiController;
-pub use traits::{CurrentSensor, PositionSensor, PwmDuty, PwmOutput, SpeedSensor};
+pub use position::ShaftPosition;
+pub use traits::{CurrentSensor, HallStateReader, PositionSensor, PwmDuty, PwmOutput, SpeedSensor};

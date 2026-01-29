@@ -11,5 +11,6 @@ mod pwm_adapter;
 
 #[allow(unused_imports)]
 pub use hall_adapter::HallSensorAdapter;
+pub use hall_adapter::HallStateReaderAdapter;
 #[allow(unused_imports)]
 pub use pwm_adapter::PwmAdapter;
