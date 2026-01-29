@@ -16,6 +16,8 @@ pub struct HallSensorAdapter {
     processor: HallProcessor,
     /// Last processed result
     last_result: HallResult,
+    /// Number of pole pairs (cached for speed calculation)
+    pole_pairs: u8,
 }
 
 impl HallSensorAdapter {
@@ -40,6 +42,7 @@ impl HallSensorAdapter {
         Self {
             processor: HallProcessor::new(config),
             last_result: HallResult::default(),
+            pole_pairs,
         }
     }
 
@@ -79,6 +82,7 @@ impl HallSensorAdapter {
     }
 
     /// Get the current electrical angle in radians
+    #[allow(dead_code)]
     pub fn get_electrical_angle(&self) -> f32 {
         self.last_result.electrical_angle
     }
@@ -89,6 +93,7 @@ impl HallSensorAdapter {
     }
 
     /// Get the current speed in RPM
+    #[allow(dead_code)]
     pub fn get_speed_rpm(&self) -> f32 {
         self.last_result.speed_rpm
     }
@@ -110,6 +115,7 @@ impl HallSensorAdapter {
     }
 
     /// Get the electrical offset
+    #[allow(dead_code)]
     pub fn get_electrical_offset(&self) -> f32 {
         self.processor.get_electrical_offset()
     }
@@ -126,18 +132,23 @@ impl HallSensorAdapter {
         self.processor.set_filter_alpha(alpha);
     }
 
-    /// Get current advance angle in degrees (placeholder - to be implemented)
-    #[allow(dead_code)]
+    /// Get current advance angle in degrees based on current speed
     pub fn get_current_advance_deg(&self) -> f32 {
-        // TODO: Implement advance angle calculation in bldc crate
-        0.0
+        let speed_rpm = self.last_result.speed_rpm;
+        if speed_rpm <= MIN_SPEED_FOR_ADVANCE {
+            return BASE_ADVANCE_DEG;
+        }
+
+        let speed_ratio = ((speed_rpm - MIN_SPEED_FOR_ADVANCE)
+            / (MAX_SPEED_FOR_ADVANCE - MIN_SPEED_FOR_ADVANCE))
+            .clamp(0.0, 1.0);
+
+        BASE_ADVANCE_DEG + (MAX_ADVANCE_DEG - BASE_ADVANCE_DEG) * speed_ratio
     }
 
-    /// Get pole pairs from processor config
+    /// Get pole pairs
     fn processor_pole_pairs(&self) -> u8 {
-        // Access through the HallConfig would require storing it separately
-        // For now, use a workaround by storing pole_pairs in the adapter
-        6 // Default, should match what was passed to new()
+        self.pole_pairs
     }
 }
 

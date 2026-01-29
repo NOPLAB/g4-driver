@@ -12,9 +12,21 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 
+use bldc::calibration::CalibrationResult;
+
 use crate::config::{StoredConfig, DEFAULT_SPEED_KI, DEFAULT_SPEED_KP};
-use crate::foc::{CalibrationResult, ControlMode};
 use crate::voltage_monitor::VoltageMonitorState;
+
+/// モーター制御モード
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ControlMode {
+    /// オープンループ強制転流（始動時）
+    OpenLoop,
+    /// クローズドループFOC制御（通常運転）
+    ClosedLoopFoc,
+    /// キャリブレーションモード（電気角オフセット・回転方向の自動検出）
+    Calibration,
+}
 use g4_driver_protocol::MotorStatus;
 
 /// モーター制御コンテキスト

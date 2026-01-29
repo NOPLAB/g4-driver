@@ -8,7 +8,9 @@ use crate::config::openloop::{
     DEFAULT_DUTY_RATIO, FORCED_COMMUTATION_CYCLES, MIN_CYCLES_BEFORE_FOC,
 };
 use crate::fmt::*;
-use crate::foc::{HallSensor, OpenLoopSixStep};
+use bldc::control::six_step::SixStepController;
+
+use crate::adapters::HallSensorAdapter;
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
@@ -75,8 +77,8 @@ pub fn reset_execution_counter() {
 /// # 戻り値
 /// * `(bool, u8)` - (FOCに切り替え可能か, Hall状態)
 pub async fn execute(
-    openloop: &mut OpenLoopSixStep,
-    _hall_sensor: &HallSensor,
+    openloop: &mut SixStepController,
+    _hall_sensor: &HallSensorAdapter,
     motor_driver: &mut MotorDriver,
     dt: f32,
 ) -> (bool, u8) {

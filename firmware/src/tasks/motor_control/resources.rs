@@ -2,13 +2,15 @@
 //!
 //! 全ての制御リソースを一元管理し、モード切り替え時のリセット処理を統一します。
 
-use crate::config::*;
-use crate::foc::{
-    DeadTimeCompensation, FluxWeakeningController, HallSensor, MotorCalibration, OpenLoopSixStep,
-    PiController,
-};
-use crate::hall_tim;
+use bldc::calibration::MotorCalibration;
+use bldc::compensation::{DeadTimeCompensation, FluxWeakeningController};
+use bldc::control::six_step::SixStepController;
+use bldc::control::PiController;
 use core::f32::consts::PI;
+
+use crate::adapters::HallSensorAdapter;
+use crate::config::*;
+use crate::hall_tim;
 
 use super::foc_mode;
 use super::openloop_mode;
@@ -16,11 +18,11 @@ use super::openloop_mode;
 /// モーター制御に必要な全リソース
 pub struct ControllerResources {
     /// Hallセンサー
-    pub hall_sensor: HallSensor,
+    pub hall_sensor: HallSensorAdapter,
     /// 速度PIコントローラ
     pub speed_pi: PiController,
     /// オープンループ始動コントローラ
-    pub openloop: OpenLoopSixStep,
+    pub openloop: SixStepController,
     /// キャリブレーションコントローラ
     pub calibration: MotorCalibration,
     /// デッドタイム補償器
@@ -35,7 +37,8 @@ impl ControllerResources {
     /// 新しいリソースセットを作成
     pub fn new(max_duty: u16) -> Self {
         // ホールセンサ初期化（foc-simple互換の機械角ベース計算）
-        let mut hall_sensor = HallSensor::new(DEFAULT_POLE_PAIRS, DEFAULT_SPEED_FILTER_ALPHA);
+        let mut hall_sensor =
+            HallSensorAdapter::new(DEFAULT_POLE_PAIRS, DEFAULT_SPEED_FILTER_ALPHA);
         hall_sensor.set_interpolation(false); // 角度補間を無効化（ノイズ対策）
 
         // 電気オフセットを設定（キャリブレーション値）
@@ -48,7 +51,7 @@ impl ControllerResources {
         speed_pi.set_anti_windup(true);
 
         // オープンループ始動コントローラ初期化
-        let openloop = OpenLoopSixStep::new(
+        let openloop = SixStepController::new(
             openloop::DEFAULT_INITIAL_RPM,
             openloop::DEFAULT_TARGET_RPM,
             openloop::DEFAULT_ACCELERATION_RPM_PER_S,

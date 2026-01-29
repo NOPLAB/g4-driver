@@ -14,9 +14,9 @@ use embassy_time::{Duration, Timer};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::ControlMode;
 use crate::motor_driver::MotorDriver;
 use crate::state;
+use crate::state::ControlMode;
 
 use mode::TransitionResult;
 use resources::ControllerResources;

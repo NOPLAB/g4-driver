@@ -10,7 +10,10 @@ use crate::fmt::*;
 use bldc::modulation::calculate_svpwm;
 use bldc::transforms::{inverse_park, limit_voltage};
 
-use crate::foc::{DeadTimeCompensation, FluxWeakeningController, HallSensor, PiController};
+use bldc::compensation::{DeadTimeCompensation, FluxWeakeningController};
+use bldc::control::PiController;
+
+use crate::adapters::HallSensorAdapter;
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
@@ -86,7 +89,7 @@ pub fn reset_stall_counter() {
 /// # 戻り値
 /// * `FocResult` - 実行結果（Continue, InvalidHall, Stalled）
 pub async fn execute(
-    hall_sensor: &mut HallSensor,
+    hall_sensor: &mut HallSensorAdapter,
     speed_pi: &mut PiController,
     motor_driver: &mut MotorDriver,
     dead_time_comp: &DeadTimeCompensation,

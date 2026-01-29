@@ -4,7 +4,6 @@
 mod adapters;
 mod config;
 mod fmt;
-mod foc;
 mod hall_tim;
 mod hardware;
 mod init;

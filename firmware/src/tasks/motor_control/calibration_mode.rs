@@ -12,9 +12,12 @@ use crate::fmt::*;
 use bldc::modulation::calculate_svpwm;
 use bldc::transforms::inverse_park;
 
-use crate::foc::{ControlMode, HallSensor, MotorCalibration};
+use bldc::calibration::MotorCalibration;
+
+use crate::adapters::HallSensorAdapter;
 use crate::motor_driver::MotorDriver;
 use crate::state;
+use crate::state::ControlMode;
 
 /// キャリブレーションデバッグログカウンタ（1Hz = 10000サイクルごと @ 10kHz）
 static DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -31,7 +34,7 @@ static DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
 /// * `Option<ControlMode>` - 完了時は次のモード（ClosedLoopFocまたはOpenLoop）、継続中はNone
 pub async fn execute(
     calibration: &mut MotorCalibration,
-    hall_sensor: &mut HallSensor,
+    hall_sensor: &mut HallSensorAdapter,
     motor_driver: &mut MotorDriver,
     dt: f32,
 ) -> Option<ControlMode> {

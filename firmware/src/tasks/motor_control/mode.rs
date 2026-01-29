@@ -2,7 +2,7 @@
 //!
 //! 制御モード間の遷移ロジックを定義します。
 
-use crate::foc::ControlMode;
+use crate::state::ControlMode;
 
 /// モード遷移結果
 #[derive(Debug, Clone, Copy, PartialEq)]
