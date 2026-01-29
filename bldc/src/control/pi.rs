@@ -15,6 +15,10 @@ pub struct PiController {
     output_min: f32,
     /// Maximum output limit
     output_max: f32,
+    /// Maximum integral term limit (prevents windup)
+    integral_limit: f32,
+    /// Maximum output change per second (slew rate limit, 0 = disabled)
+    slew_rate_limit: f32,
     /// Last calculated output
     last_output: f32,
     /// Enable anti-windup (stops integral accumulation when saturated)
@@ -33,6 +37,7 @@ impl PiController {
     /// Note: Anti-windup is disabled by default to match calebfletcher/foc reference implementation.
     /// This allows integral term to accumulate even when output is saturated,
     /// which is important for motor control stability.
+    /// Integral limit defaults to output_max to prevent excessive accumulation.
     pub fn new(kp: f32, ki: f32, output_min: f32, output_max: f32) -> Self {
         Self {
             kp,
@@ -40,6 +45,8 @@ impl PiController {
             integral: 0.0,
             output_min,
             output_max,
+            integral_limit: output_max, // Default: limit integral to output range
+            slew_rate_limit: 0.0,       // Default: disabled (0 = no limit)
             last_output: 0.0,
             anti_windup_enabled: false,
         }
@@ -78,13 +85,28 @@ impl PiController {
 
         if should_integrate {
             self.integral += self.ki * error * dt;
+            // Clamp integral term to prevent excessive accumulation (windup protection)
+            self.integral = self.integral.clamp(-self.integral_limit, self.integral_limit);
         }
 
         // Calculate output (integral already includes ki)
         let output = p_term + self.integral;
 
         // Apply output limits
-        self.last_output = output.clamp(self.output_min, self.output_max);
+        let mut limited_output = output.clamp(self.output_min, self.output_max);
+
+        // Apply slew rate limit (output change rate limit)
+        if self.slew_rate_limit > 0.0 {
+            let max_delta = self.slew_rate_limit * dt;
+            let delta = limited_output - self.last_output;
+            if delta > max_delta {
+                limited_output = self.last_output + max_delta;
+            } else if delta < -max_delta {
+                limited_output = self.last_output - max_delta;
+            }
+        }
+
+        self.last_output = limited_output;
 
         self.last_output
     }
@@ -155,6 +177,38 @@ impl PiController {
     #[allow(dead_code)]
     pub fn set_anti_windup(&mut self, enabled: bool) {
         self.anti_windup_enabled = enabled;
+    }
+
+    /// Set the integral term limit
+    ///
+    /// # Arguments
+    /// * `limit` - Maximum absolute value for integral term (symmetric: +/- limit)
+    #[allow(dead_code)]
+    pub fn set_integral_limit(&mut self, limit: f32) {
+        self.integral_limit = limit.abs();
+    }
+
+    /// Get the integral term limit
+    #[allow(dead_code)]
+    pub fn get_integral_limit(&self) -> f32 {
+        self.integral_limit
+    }
+
+    /// Set the slew rate limit (maximum output change per second)
+    ///
+    /// # Arguments
+    /// * `rate` - Maximum output change per second (0 = disabled)
+    ///
+    /// This prevents sudden output changes that can cause motor jerking.
+    /// Recommended value: 100-500 V/s for motor speed control.
+    pub fn set_slew_rate_limit(&mut self, rate: f32) {
+        self.slew_rate_limit = rate.abs();
+    }
+
+    /// Get the slew rate limit
+    #[allow(dead_code)]
+    pub fn get_slew_rate_limit(&self) -> f32 {
+        self.slew_rate_limit
     }
 
     /// Check if output is currently saturated
@@ -247,5 +301,96 @@ mod tests {
 
         // With anti-windup, integral should stop growing
         assert!(approx_eq(integral_before, integral_after));
+    }
+
+    #[test]
+    fn test_integral_limit() {
+        let mut pi = PiController::new(0.0, 100.0, -50.0, 50.0);
+
+        // Set a smaller integral limit
+        pi.set_integral_limit(10.0);
+        assert!(approx_eq(pi.get_integral_limit(), 10.0));
+
+        // Large error should try to accumulate huge integral
+        // But it should be clamped to +/- 10.0
+        for _ in 0..100 {
+            pi.update(1000.0, 0.0, 0.1); // error = 1000, would add 10000 to integral each step
+        }
+
+        // Integral should be clamped to limit
+        assert!(pi.get_integral() <= 10.0);
+        assert!(pi.get_integral() >= -10.0);
+    }
+
+    #[test]
+    fn test_integral_limit_negative() {
+        let mut pi = PiController::new(0.0, 100.0, -50.0, 50.0);
+        pi.set_integral_limit(10.0);
+
+        // Negative error should clamp to -limit
+        for _ in 0..100 {
+            pi.update(-1000.0, 0.0, 0.1);
+        }
+
+        assert!(pi.get_integral() >= -10.0);
+        assert!(pi.get_integral() <= 10.0);
+    }
+
+    #[test]
+    fn test_default_integral_limit() {
+        // Default integral limit should be output_max
+        let pi = PiController::new(1.0, 1.0, -20.0, 30.0);
+        assert!(approx_eq(pi.get_integral_limit(), 30.0));
+    }
+
+    #[test]
+    fn test_slew_rate_limit() {
+        let mut pi = PiController::new(10.0, 0.0, -100.0, 100.0);
+        pi.set_slew_rate_limit(50.0); // 50 units/second
+
+        // Start at 0, request output of 100 (via error=10, kp=10)
+        // With dt=0.1s, max change is 50 * 0.1 = 5 units
+        let output1 = pi.update(10.0, 0.0, 0.1);
+        assert!(approx_eq(output1, 5.0)); // Limited from 100 to 5
+
+        // Next step, can increase by another 5
+        let output2 = pi.update(10.0, 0.0, 0.1);
+        assert!(approx_eq(output2, 10.0)); // Limited to 10
+
+        // After many steps, should reach the target
+        for _ in 0..100 {
+            pi.update(10.0, 0.0, 0.1);
+        }
+        assert!(approx_eq(pi.get_output(), 100.0)); // Reached max
+    }
+
+    #[test]
+    fn test_slew_rate_limit_decrease() {
+        let mut pi = PiController::new(10.0, 0.0, -100.0, 100.0);
+        pi.set_slew_rate_limit(50.0);
+
+        // First, ramp up to 50
+        for _ in 0..20 {
+            pi.update(10.0, 0.0, 0.1);
+        }
+        let high_output = pi.get_output();
+        assert!(high_output > 40.0);
+
+        // Now request negative output
+        // Should decrease by max 5 per step
+        let output1 = pi.update(-10.0, 0.0, 0.1);
+        assert!(output1 < high_output);
+        assert!(output1 >= high_output - 5.0 - EPSILON);
+    }
+
+    #[test]
+    fn test_slew_rate_disabled() {
+        let mut pi = PiController::new(10.0, 0.0, -100.0, 100.0);
+        // Default: slew rate limit is 0 (disabled)
+        assert!(approx_eq(pi.get_slew_rate_limit(), 0.0));
+
+        // Should immediately reach the target
+        let output = pi.update(10.0, 0.0, 0.1);
+        assert!(approx_eq(output, 100.0)); // Immediately at max
     }
 }
