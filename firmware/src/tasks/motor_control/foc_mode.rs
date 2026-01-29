@@ -65,7 +65,18 @@ impl FocMode {
 
     /// モード開始時の初期化
     pub fn on_enter(&self, ctx: &mut ModeContext<'_>, _prev_mode: ControlMode) {
-        let current_rpm = ctx.resources.openloop.get_current_rpm();
+        // 実際のHall速度を取得（OpenLoopの理論値ではなく実測値を使用）
+        let period = hall_tim::get_period_cycles();
+        let actual_rpm =
+            hall_tim::calculate_speed_rpm(period, crate::config::motor::DEFAULT_POLE_PAIRS);
+
+        // 実測値が有効な場合はそれを使用、そうでなければOpenLoopの値を使用
+        let current_rpm = if actual_rpm > 50.0 {
+            actual_rpm
+        } else {
+            ctx.resources.openloop.get_current_rpm()
+        };
+
         ctx.resources.prepare_for_foc(current_rpm);
         info!("Switching to FOC mode: speed={} RPM", current_rpm);
     }
@@ -94,7 +105,7 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
     let ramped_target_speed = &mut ctx.resources.ramped_target_speed;
     let dt = ctx.dt;
 
-    // 電気角と速度とHall状態を取得（TIM4ハードウェアベース、foc-simple互換計算）
+    // 電気角と速度とHall状態を取得（TIM4ハードウェアベース）
     // Hall状態は1回だけ読み取り、再取得による競合を防止
     let (hall_electrical_angle, speed_rpm, hall_state) = hall_sensor.update(dt);
     let is_valid_hall = (1..=6).contains(&hall_state);
@@ -172,15 +183,11 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
         vq_cmd = 0.0;
     }
 
-    // 最小電圧適用（静止摩擦克服用）
-    let speed_error_abs = (*ramped_target_speed - speed_rpm).abs();
-    if speed_error_abs > voltage::MIN_ERROR_THRESHOLD && vq_cmd.abs() > 0.0 {
-        // 速度誤差が大きい場合、最小電圧を適用
-        if vq_cmd > 0.0 {
-            vq_cmd = vq_cmd.max(voltage::MIN);
-        } else {
-            vq_cmd = vq_cmd.min(-voltage::MIN);
-        }
+    // 最小電圧適用（走行中の脱調防止）
+    // 目標速度 > 実測速度 の場合のみ最小電圧を適用
+    // 実測速度が目標を上回っている場合は適用しない（発振防止）
+    if *ramped_target_speed > speed_rpm + 10.0 {
+        vq_cmd = vq_cmd.max(voltage::MIN);
     }
 
     // 電圧ベクトル制限（100%）
@@ -189,6 +196,15 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
     // 逆回転防止：Vqを正の値のみに制限（一方向回転）
     let vq_cmd_positive = vq_cmd.max(0.0);
     let (vd_limited, vq_limited) = limit_voltage(vd_cmd, vq_cmd_positive, max_voltage);
+
+    // 電圧飽和検出：飽和状態が続くと脱調の原因になるためカウント
+    // 50%以上の飽和（vq_limitedがvq_cmd_positiveの半分以下）は危険な状態
+    let is_severe_saturation = vq_cmd_positive > 0.1 && (vq_limited / vq_cmd_positive) < 0.5;
+    if is_severe_saturation {
+        RUNTIME.foc.increment_saturation();
+    } else {
+        RUNTIME.foc.reset_saturation();
+    }
 
     // Park逆変換（dq → αβ）
     let (v_alpha, v_beta) = inverse_park(vd_limited, vq_limited, hall_electrical_angle);
@@ -259,7 +275,6 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
         // TIM4ベースのHallセンサ値を取得（ログ用）
         let period_cycles = hall_tim::get_period_cycles();
 
-        // ローカル変数を使用（追加のMutexロック不要）
         debug!(
             "[FOC] Speed: {}/{} RPM (ramped: {}), Angle: {}rad, Hall: {}, Period: {} cycles",
             speed_rpm,

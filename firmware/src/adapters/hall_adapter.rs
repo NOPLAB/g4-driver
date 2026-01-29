@@ -31,6 +31,7 @@ impl HallSensorAdapter {
             pole_pairs,
             filter_alpha,
             electrical_offset: 0.0,
+            direction_inversed: false,
             enable_interpolation: true,
             enable_advance_angle: true,
             base_advance_deg: BASE_ADVANCE_DEG,
@@ -120,10 +121,27 @@ impl HallSensorAdapter {
         self.processor.get_electrical_offset()
     }
 
+    /// Set whether motor direction is inverted (calibration value)
+    pub fn set_direction_inversed(&mut self, inversed: bool) {
+        self.processor.set_direction_inversed(inversed);
+    }
+
+    /// Get whether motor direction is inverted
+    #[allow(dead_code)]
+    pub fn get_direction_inversed(&self) -> bool {
+        self.processor.get_direction_inversed()
+    }
+
     /// Enable or disable interpolation
     #[allow(dead_code)]
     pub fn set_interpolation(&mut self, enable: bool) {
         self.processor.set_interpolation(enable);
+    }
+
+    /// Enable or disable advance angle
+    #[allow(dead_code)]
+    pub fn set_advance_angle(&mut self, enable: bool) {
+        self.processor.set_advance_angle(enable);
     }
 
     /// Set the filter alpha

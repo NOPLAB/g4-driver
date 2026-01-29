@@ -48,7 +48,11 @@ impl ConfigLoader {
     pub async fn load_and_apply(&mut self) -> bool {
         info!("Loading configuration from flash...");
 
-        let loaded_config = config::load_or_initialize_config(&mut self.flash, &mut self.crc).await;
+        // デバッグ用: フラッシュを無視してデフォルト値を使用
+        // TODO: デバッグ完了後に元に戻す
+        // let loaded_config = config::load_or_initialize_config(&mut self.flash, &mut self.crc).await;
+        let loaded_config = config::StoredConfig::default();
+        info!("Using DEFAULT config (flash ignored for debugging)");
 
         // グローバル状態に設定を適用
         state::update_system_config(loaded_config, loaded_config.version, true).await;

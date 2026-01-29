@@ -40,17 +40,20 @@ pub mod control {
 
 /// 速度制御パラメータ（PIゲイン、フィルタ、加速度制限）
 pub mod speed {
-    /// 比例ゲイン Kp（低速応答性向上）
-    pub const DEFAULT_KP: f32 = 0.2;
+    /// 比例ゲイン Kp（発振抑制のため低めに設定）
+    pub const DEFAULT_KP: f32 = 0.1;
 
-    /// 積分ゲイン Ki（定常偏差低減）
-    pub const DEFAULT_KI: f32 = 0.05;
+    /// 積分ゲイン Ki（発振抑制のため低めに設定）
+    pub const DEFAULT_KI: f32 = 0.02;
 
-    /// 速度フィルタ係数 α（foc-simple互換: α=0.05でより滑らかな速度推定）
-    pub const DEFAULT_FILTER_ALPHA: f32 = 0.05;
+    /// 速度フィルタ係数 α（0.10: 応答性と安定性のバランス）
+    pub const DEFAULT_FILTER_ALPHA: f32 = 0.10;
 
-    /// 速度指令の最大加速度 [RPM/s]（急激な速度変化を抑制してPI制御を安定化）
-    pub const MAX_ACCELERATION: f32 = 100.0;
+    /// 速度指令の最大加速度 [RPM/s]（200 RPM/sで緩やかな加速、PI制御の安定化）
+    pub const MAX_ACCELERATION: f32 = 500.0;
+
+    /// PI積分項リミット [V]（電圧飽和による脱調防止）
+    pub const PI_INTEGRAL_LIMIT: f32 = 12.0;
 }
 
 // =============================================================================
@@ -115,8 +118,9 @@ pub mod foc_stall {
     pub const SPEED_THRESHOLD: f32 = 50.0;
 
     /// 脱落判定の連続回数閾値
-    /// 10kHz制御で1000回 = 100ms以上連続して低速ならOpenLoopに戻る
-    pub const COUNT_THRESHOLD: u32 = 1000;
+    /// 10kHz制御で500回 = 50ms以上連続して低速ならOpenLoopに戻る
+    /// 早期検出により脱調からの回復を迅速化
+    pub const COUNT_THRESHOLD: u32 = 500;
 }
 
 // =============================================================================
@@ -126,12 +130,12 @@ pub mod foc_stall {
 /// オープンループ始動パラメータ（6ステップ駆動）
 pub mod openloop {
     /// 初期回転数 [RPM]（起動用：100RPMから開始）
-    pub const DEFAULT_INITIAL_RPM: f32 = 100.0;
+    pub const DEFAULT_INITIAL_RPM: f32 = 50.0;
 
-    /// FOC切替回転数 [RPM]（目標速度）
-    pub const DEFAULT_TARGET_RPM: f32 = 300.0;
+    /// FOC切替回転数 [RPM]
+    pub const DEFAULT_TARGET_RPM: f32 = 100.0;
 
-    /// 加速度 [RPM/s]（起動用：適度な加速）
+    /// 加速度 [RPM/s]
     pub const DEFAULT_ACCELERATION: f32 = 200.0;
 
     /// デューティ比 (0-100)（Hall ベース駆動用：15%）
@@ -144,8 +148,7 @@ pub mod openloop {
     pub const MIN_CYCLES_BEFORE_FOC: u32 = 10000;
 
     /// FOC切り替えに必要な最小速度 [RPM]
-    /// 回復時のみ適用（速度が出ていることを確認してからFOCに移行）
-    pub const MIN_SPEED_FOR_FOC: f32 = 50.0;
+    pub const MIN_SPEED_FOR_FOC: f32 = 100.0;
 }
 
 // =============================================================================
@@ -160,7 +163,7 @@ pub mod pwm {
     pub const DEFAULT_FREQUENCY: Hertz = Hertz(50_000);
 
     /// デッドタイム
-    pub const DEFAULT_DEAD_TIME: u16 = 1;
+    pub const DEFAULT_DEAD_TIME: u16 = 2;
 }
 
 // =============================================================================

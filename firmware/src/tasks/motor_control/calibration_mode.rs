@@ -118,13 +118,14 @@ async fn execute_calibration_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
 
                     // Hall センサーに結果を適用
                     hall_sensor.set_electrical_offset(result.electrical_offset);
-                    // TODO: 方向反転の適用（HallSensor に direction_inversed を追加する必要がある）
+                    hall_sensor.set_direction_inversed(result.direction_inversed);
 
-                    // ClosedLoopFocモードに切り替え
-                    state::motor_context().await.control_mode = ControlMode::ClosedLoopFoc;
+                    // OpenLoopモードに切り替え（低速域が不安定なモーター向け）
+                    // OpenLoopで加速してからFOCに移行する
+                    state::motor_context().await.control_mode = ControlMode::OpenLoop;
 
-                    info!("Switching to ClosedLoopFoc mode");
-                    return ModeResult::TransitionTo(ControlMode::ClosedLoopFoc);
+                    info!("Switching to OpenLoop mode (will transition to FOC after acceleration)");
+                    return ModeResult::TransitionTo(ControlMode::OpenLoop);
                 } else {
                     error!("Calibration failed!");
                     // エラー時はモーターを停止

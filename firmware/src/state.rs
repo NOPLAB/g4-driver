@@ -149,6 +149,8 @@ pub struct FocCounters {
     stall_counter: AtomicU32,
     /// 無効Hall状態の連続カウンタ
     invalid_hall_counter: AtomicU32,
+    /// 電圧飽和の連続カウンタ
+    saturation_counter: AtomicU32,
 }
 
 impl FocCounters {
@@ -157,6 +159,7 @@ impl FocCounters {
         Self {
             stall_counter: AtomicU32::new(0),
             invalid_hall_counter: AtomicU32::new(0),
+            saturation_counter: AtomicU32::new(0),
         }
     }
 
@@ -184,11 +187,31 @@ impl FocCounters {
         self.invalid_hall_counter.store(0, Ordering::Relaxed);
     }
 
+    /// 飽和カウンタをインクリメントし、新しい値を返す
+    #[inline(always)]
+    pub fn increment_saturation(&self) -> u32 {
+        self.saturation_counter.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// 飽和カウンタをリセット
+    #[inline(always)]
+    pub fn reset_saturation(&self) {
+        self.saturation_counter.store(0, Ordering::Relaxed);
+    }
+
+    /// 飽和カウンタの値を取得
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub fn get_saturation(&self) -> u32 {
+        self.saturation_counter.load(Ordering::Relaxed)
+    }
+
     /// 全カウンタをリセット
     #[inline(always)]
     pub fn reset_all(&self) {
         self.stall_counter.store(0, Ordering::Relaxed);
         self.invalid_hall_counter.store(0, Ordering::Relaxed);
+        self.saturation_counter.store(0, Ordering::Relaxed);
     }
 }
 

@@ -179,6 +179,7 @@ pub async fn initialize_default_config(
 ///
 /// # Returns
 /// * 有効な設定（読み込み成功 or デフォルト設定）
+#[allow(dead_code)]
 pub async fn load_or_initialize_config(
     flash: &mut Flash<'_, Blocking>,
     crc: &mut Crc<'_>,

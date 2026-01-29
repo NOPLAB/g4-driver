@@ -14,4 +14,8 @@ pub use params::*;
 pub use storage::StoredConfig;
 
 // eepromモジュールの主要な関数を再エクスポート
-pub use eeprom::{initialize_default_config, load_or_initialize_config, read_config, write_config};
+pub use eeprom::{initialize_default_config, read_config, write_config};
+
+// デバッグ用: load_or_initialize_configは一時的に未使用
+#[allow(unused_imports)]
+pub use eeprom::load_or_initialize_config;

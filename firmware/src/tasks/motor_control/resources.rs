@@ -45,10 +45,11 @@ impl ControllerResources {
         let offset_rad = hall::DEFAULT_ANGLE_OFFSET_DEG * PI / 180.0;
         hall_sensor.set_electrical_offset(offset_rad);
 
-        // 速度PIコントローラ初期化（アンチワインドアップ有効）
+        // 速度PIコントローラ初期化（アンチワインドアップ有効、積分リミット設定）
         let mut speed_pi =
             PiController::new_symmetric(speed::DEFAULT_KP, speed::DEFAULT_KI, voltage::DEFAULT_MAX);
         speed_pi.set_anti_windup(true);
+        speed_pi.set_integral_limit(speed::PI_INTEGRAL_LIMIT);
 
         // オープンループ始動コントローラ初期化
         let openloop_ctrl = SixStepController::new(
@@ -113,11 +114,15 @@ impl ControllerResources {
 
     /// FOCモード移行時の準備
     ///
+    /// OpenLoopのSVPWM駆動からFOCへスムーズに移行するため、
+    /// PI制御器と速度フィルタを適切な初期値で初期化します。
+    ///
     /// # Arguments
     /// * `current_rpm` - OpenLoopからの引き継ぎ速度
     pub fn prepare_for_foc(&mut self, current_rpm: f32) {
-        // PI制御をリセット（クリーンな状態からスタート）
-        self.speed_pi.reset();
+        // OpenLoopのDuty相当のVq初期値を計算（出力の連続性を確保）
+        let initial_vq = (openloop::DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
+        self.speed_pi.initialize_output(initial_vq);
 
         // FOCの脱落カウンタをリセット
         RUNTIME.foc.reset_all();

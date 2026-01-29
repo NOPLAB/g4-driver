@@ -119,6 +119,19 @@ impl PiController {
         self.last_output = 0.0;
     }
 
+    /// Initialize the integral term and last output to a specific value
+    ///
+    /// Use this when transitioning from another control mode to ensure
+    /// smooth output continuity. The value should match the expected
+    /// initial output to prevent sudden jumps.
+    ///
+    /// # Arguments
+    /// * `value` - Initial value for both integral term and last output
+    pub fn initialize_output(&mut self, value: f32) {
+        self.integral = value.clamp(-self.integral_limit, self.integral_limit);
+        self.last_output = value.clamp(self.output_min, self.output_max);
+    }
+
     /// Set the proportional and integral gains
     ///
     /// # Arguments

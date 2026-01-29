@@ -55,6 +55,8 @@ pub struct HallConfig {
     pub filter_alpha: f32,
     /// Electrical offset in radians (calibration value)
     pub electrical_offset: f32,
+    /// Whether motor direction is inverted (calibration value)
+    pub direction_inversed: bool,
     /// Enable angle interpolation between Hall edges
     pub enable_interpolation: bool,
     /// Enable advance angle for improved efficiency
@@ -75,6 +77,7 @@ impl Default for HallConfig {
             pole_pairs: 6,
             filter_alpha: 0.05,
             electrical_offset: 0.0,
+            direction_inversed: false,
             enable_interpolation: true,
             enable_advance_angle: true,
             base_advance_deg: 15.0,
@@ -245,6 +248,16 @@ impl HallProcessor {
         self.config.electrical_offset
     }
 
+    /// Set whether motor direction is inverted (calibration value)
+    pub fn set_direction_inversed(&mut self, inversed: bool) {
+        self.config.direction_inversed = inversed;
+    }
+
+    /// Get whether motor direction is inverted
+    pub fn get_direction_inversed(&self) -> bool {
+        self.config.direction_inversed
+    }
+
     /// Reset the processor state
     pub fn reset(&mut self) {
         self.prev_state = INVALID_STATE;
@@ -264,6 +277,11 @@ impl HallProcessor {
     /// Enable or disable interpolation
     pub fn set_interpolation(&mut self, enable: bool) {
         self.config.enable_interpolation = enable;
+    }
+
+    /// Enable or disable advance angle
+    pub fn set_advance_angle(&mut self, enable: bool) {
+        self.config.enable_advance_angle = enable;
     }
 
     /// Set the speed filter coefficient
@@ -349,8 +367,12 @@ impl HallProcessor {
         // Calculate mechanical angular velocity (rad/s)
         let mechanical_omega = self.filtered_speed * (TAU / 60.0);
 
-        // Interpolate angle
-        let angle_increment = mechanical_omega * self.time_since_edge;
+        // Interpolate angle (invert direction if motor direction is inverted)
+        let angle_increment = if self.config.direction_inversed {
+            -mechanical_omega * self.time_since_edge
+        } else {
+            mechanical_omega * self.time_since_edge
+        };
         normalize_angle(base_angle + angle_increment)
     }
 
