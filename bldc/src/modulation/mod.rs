@@ -5,4 +5,4 @@
 
 pub mod svpwm;
 
-pub use svpwm::{calculate_svpwm, calculate_sinusoidal_pwm};
+pub use svpwm::{calculate_sinusoidal_pwm, calculate_svpwm};

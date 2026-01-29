@@ -7,7 +7,11 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::{calculate_svpwm, inverse_park, ControlMode, HallSensor, MotorCalibration};
+// Use bldc crate for portable algorithms
+use bldc::modulation::calculate_svpwm;
+use bldc::transforms::inverse_park;
+
+use crate::foc::{ControlMode, HallSensor, MotorCalibration};
 use crate::motor_driver::MotorDriver;
 use crate::state;
 

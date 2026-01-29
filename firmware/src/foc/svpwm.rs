@@ -7,6 +7,7 @@
 // detection instead of trigonometric functions, providing better
 // performance and accuracy for embedded systems.
 
+#[allow(dead_code)]
 const SQRT3: f32 = 1.732_050_8; // sqrt(3)
 
 /// Calculate Space Vector PWM duty cycles
@@ -33,6 +34,7 @@ const SQRT3: f32 = 1.732_050_8; // sqrt(3)
 /// 4. Calculate duty cycles directly from x/y/z values
 /// 5. Convert from range [-1, 1] to [0, max_duty]
 #[inline]
+#[allow(dead_code)]
 pub fn calculate_svpwm(v_alpha: f32, v_beta: f32, v_dc: f32, max_duty: u16) -> (u16, u16, u16) {
     // Prevent division by zero
     if v_dc <= 0.0 {

@@ -24,6 +24,9 @@ use resources::ControllerResources;
 /// モーター制御タスク（10kHz FOC制御ループ）
 #[embassy_executor::task]
 pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::TIM1>) {
+    // 電源投入後、ハードウェア安定待ち
+    Timer::after(Duration::from_millis(500)).await;
+
     info!("Motor control task started (OpenLoop + FOC mode)");
 
     // モータードライバー初期化

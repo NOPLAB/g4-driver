@@ -4,6 +4,7 @@
 use libm::{cosf, sinf, sqrtf};
 
 // Enable idsp-based fast trigonometric functions
+#[allow(dead_code)]
 const USE_IDSP_COSSIN: bool = true;
 
 /// Inverse Park transformation (dq → αβ)
@@ -22,6 +23,7 @@ const USE_IDSP_COSSIN: bool = true;
 /// Uses idsp::cossin() for fast trigonometric calculation (~40 cycles on Cortex-M)
 /// compared to libm::cosf/sinf (~100-200 cycles). Can be switched via USE_IDSP_COSSIN.
 #[inline]
+#[allow(dead_code)]
 pub fn inverse_park(vd: f32, vq: f32, theta: f32) -> (f32, f32) {
     if USE_IDSP_COSSIN {
         inverse_park_idsp(vd, vq, theta)
@@ -106,6 +108,7 @@ pub fn inverse_clarke(v_alpha: f32, v_beta: f32) -> (f32, f32, f32) {
 /// # Returns
 /// Tuple of (vd_limited, vq_limited)
 #[inline]
+#[allow(dead_code)]
 pub fn limit_voltage(vd: f32, vq: f32, max_voltage: f32) -> (f32, f32) {
     // Fast path: vd == 0 の場合（SPMSMで一般的）、sqrtfをスキップ
     if vd == 0.0 {

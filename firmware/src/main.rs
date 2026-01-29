@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod adapters;
 mod benchmark;
 mod config;
 mod fmt;

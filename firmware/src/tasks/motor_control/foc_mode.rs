@@ -6,10 +6,11 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::{
-    calculate_svpwm, inverse_park, limit_voltage, DeadTimeCompensation, FluxWeakeningController,
-    HallSensor, PiController,
-};
+// Use bldc crate for portable algorithms
+use bldc::modulation::calculate_svpwm;
+use bldc::transforms::{inverse_park, limit_voltage};
+
+use crate::foc::{DeadTimeCompensation, FluxWeakeningController, HallSensor, PiController};
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;

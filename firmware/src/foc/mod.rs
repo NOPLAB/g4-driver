@@ -18,8 +18,8 @@ pub use flux_weakening::FluxWeakeningController;
 pub use hall::HallSensor;
 pub use openloop_six_step::OpenLoopSixStep;
 pub use pi_controller::PiController;
-pub use svpwm::calculate_svpwm;
-pub use transforms::{inverse_park, limit_voltage};
+// Note: calculate_svpwm, inverse_park, limit_voltage are now imported from the bldc crate
+// Use `bldc::modulation::calculate_svpwm` and `bldc::transforms::*` instead
 
 // Benchmark function for performance testing
 #[cfg(not(test))]

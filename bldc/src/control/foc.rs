@@ -63,11 +63,8 @@ impl FocController {
     /// # Arguments
     /// * `config` - FOC configuration
     pub fn new(config: FocConfig) -> Self {
-        let speed_pi = PiController::new_symmetric(
-            config.speed_kp,
-            config.speed_ki,
-            config.max_voltage,
-        );
+        let speed_pi =
+            PiController::new_symmetric(config.speed_kp, config.speed_ki, config.max_voltage);
 
         Self {
             speed_pi,
@@ -101,12 +98,7 @@ impl FocController {
         let (v_alpha, v_beta) = inverse_park(vd, vq, electrical_angle);
 
         // SVPWM to get duty cycles
-        let (du, dv, dw) = calculate_svpwm(
-            v_alpha,
-            v_beta,
-            self.config.v_dc,
-            self.config.max_duty,
-        );
+        let (du, dv, dw) = calculate_svpwm(v_alpha, v_beta, self.config.v_dc, self.config.max_duty);
 
         PwmDuty::new(du, dv, dw)
     }

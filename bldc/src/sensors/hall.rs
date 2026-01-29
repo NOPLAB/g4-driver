@@ -218,8 +218,7 @@ impl HallProcessor {
         self.mechanical_angle = mechanical_angle;
 
         // Calculate electrical angle
-        let electrical_angle =
-            self.calculate_electrical_angle(mechanical_angle, hall_state);
+        let electrical_angle = self.calculate_electrical_angle(mechanical_angle, hall_state);
 
         HallResult {
             electrical_angle,
@@ -342,8 +341,7 @@ impl HallProcessor {
     }
 
     fn interpolate_angle(&self, base_angle: f32) -> f32 {
-        if !self.config.enable_interpolation
-            || self.filtered_speed.abs() <= MIN_INTERPOLATION_SPEED
+        if !self.config.enable_interpolation || self.filtered_speed.abs() <= MIN_INTERPOLATION_SPEED
         {
             return base_angle;
         }
@@ -357,8 +355,8 @@ impl HallProcessor {
     }
 
     fn calculate_electrical_angle(&self, mechanical_angle: f32, hall_state: u8) -> f32 {
-        let use_interpolation = self.config.enable_interpolation
-            && self.filtered_speed.abs() > MIN_INTERPOLATION_SPEED;
+        let use_interpolation =
+            self.config.enable_interpolation && self.filtered_speed.abs() > MIN_INTERPOLATION_SPEED;
 
         // Calculate base electrical angle
         let base_electrical_angle = if use_interpolation {
@@ -423,12 +421,12 @@ mod tests {
     #[test]
     fn test_hall_state_table() {
         assert_eq!(HALL_STATE_TABLE[0], 255); // Invalid
-        assert_eq!(HALL_STATE_TABLE[1], 0);   // State 1 -> index 0
-        assert_eq!(HALL_STATE_TABLE[2], 2);   // State 2 -> index 2
-        assert_eq!(HALL_STATE_TABLE[3], 1);   // State 3 -> index 1
-        assert_eq!(HALL_STATE_TABLE[4], 4);   // State 4 -> index 4
-        assert_eq!(HALL_STATE_TABLE[5], 5);   // State 5 -> index 5
-        assert_eq!(HALL_STATE_TABLE[6], 3);   // State 6 -> index 3
+        assert_eq!(HALL_STATE_TABLE[1], 0); // State 1 -> index 0
+        assert_eq!(HALL_STATE_TABLE[2], 2); // State 2 -> index 2
+        assert_eq!(HALL_STATE_TABLE[3], 1); // State 3 -> index 1
+        assert_eq!(HALL_STATE_TABLE[4], 4); // State 4 -> index 4
+        assert_eq!(HALL_STATE_TABLE[5], 5); // State 5 -> index 5
+        assert_eq!(HALL_STATE_TABLE[6], 3); // State 6 -> index 3
         assert_eq!(HALL_STATE_TABLE[7], 255); // Invalid
     }
 
