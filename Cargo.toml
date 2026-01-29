@@ -1,5 +1,5 @@
 [workspace]
-members = ["firmware", "controller", "protocol"]
+members = ["bldc", "firmware", "controller", "protocol"]
 resolver = "2"
 
 # Firmware build profiles (shared for workspace)
