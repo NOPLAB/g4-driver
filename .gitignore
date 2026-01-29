@@ -1,1 +1,4 @@
 /target
+
+# Simulation output files
+bldc-sim/output/

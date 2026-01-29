@@ -1,0 +1,24 @@
+[package]
+name = "bldc-sim"
+version = "0.1.0"
+edition = "2021"
+description = "BLDC motor physics simulation for FOC control validation"
+license = "MIT"
+
+[dependencies]
+bldc = { path = "../bldc" }
+libm = "0.2"
+
+# Optional dependencies for output
+csv = { version = "1.3", optional = true }
+plotters = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# For floating point comparisons in tests
+approx = "0.5"
+
+[features]
+default = []
+visualization = ["plotters"]
+csv-output = ["csv"]
+full-output = ["visualization", "csv-output"]
