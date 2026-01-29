@@ -1,0 +1,30 @@
+{
+  "deviceId" : 1128,
+  "bitNameToValue" : {
+    "RDP" : 170,
+    "BOR_LEV" : 0,
+    "nRST_STOP" : 1,
+    "nRST_STDBY" : 1,
+    "nRST_SHDW" : 1,
+    "IWDG_SW" : 1,
+    "IWDG_STOP" : 1,
+    "IWDG_STDBY" : 1,
+    "WWDG_SW" : 1,
+    "nBOOT1" : 1,
+    "SRAM_PE" : 1,
+    "CCMSRAM_RST" : 1,
+    "nSWBOOT0" : 1,
+    "nBOOT0" : 1,
+    "NRST_MODE" : 3,
+    "IRHEN" : 1,
+    "PCROP1_STRT" : 16383,
+    "PCROP1_END" : 0,
+    "PCROP_RDP" : 0,
+    "WRP1A_STRT" : 63,
+    "WRP1A_END" : 0,
+    "WRP1B_STRT" : 63,
+    "WRP1B_END" : 0,
+    "SEC_SIZE1" : 0,
+    "BOOT_LOCK" : 0
+  }
+}
