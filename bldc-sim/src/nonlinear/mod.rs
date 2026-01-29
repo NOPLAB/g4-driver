@@ -58,9 +58,7 @@ impl NonlinearEffects {
 
     /// Check if any effect is enabled
     pub fn any_enabled(&self) -> bool {
-        self.saturation.is_enabled()
-            || self.cogging.is_enabled()
-            || self.dead_time.is_enabled()
+        self.saturation.is_enabled() || self.cogging.is_enabled() || self.dead_time.is_enabled()
     }
 
     /// Enable or disable all effects

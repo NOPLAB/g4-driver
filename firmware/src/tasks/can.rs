@@ -12,7 +12,7 @@ use embedded_can::Id;
 
 use crate::config;
 use crate::fmt::*;
-use crate::state::{self, SYSTEM_CONTEXT};
+use crate::state::{self, MOTOR_STATE};
 use g4_driver_protocol::{
     can_ids, parse_advance_angle_params, parse_advance_angle_speed, parse_angle_interpolation,
     parse_can_config, parse_control_timing, parse_dead_time_comp_params, parse_enable_command,
@@ -163,74 +163,74 @@ pub async fn can_task(
                             // === Motor Control Parameter Commands ===
                             can_ids::MOTOR_VOLTAGE_PARAMS => {
                                 if let Some((max_voltage, v_dc_bus)) = parse_motor_voltage_params(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.max_voltage = max_voltage;
-                                    ctx.runtime_config.v_dc_bus = v_dc_bus;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.max_voltage = max_voltage;
+                                    ctx.system.runtime_config.v_dc_bus = v_dc_bus;
                                     info!("Updated motor voltage params: max={}, vdc={}", max_voltage, v_dc_bus);
                                 }
                             }
                             can_ids::MOTOR_BASIC_PARAMS => {
                                 if let Some((pole_pairs, max_duty)) = parse_motor_basic_params(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.pole_pairs = pole_pairs;
-                                    ctx.runtime_config.max_duty = max_duty;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.pole_pairs = pole_pairs;
+                                    ctx.system.runtime_config.max_duty = max_duty;
                                     info!("Updated motor basic params: pole_pairs={}, max_duty={}", pole_pairs, max_duty);
                                 }
                             }
                             can_ids::HALL_SENSOR_PARAMS => {
                                 if let Some((alpha, offset)) = parse_hall_sensor_params(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.speed_filter_alpha = alpha;
-                                    ctx.runtime_config.hall_angle_offset = offset;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.speed_filter_alpha = alpha;
+                                    ctx.system.runtime_config.hall_angle_offset = offset;
                                     info!("Updated hall sensor params: alpha={}, offset={}", alpha, offset);
                                 }
                             }
                             can_ids::ANGLE_INTERPOLATION => {
                                 if let Some(enable) = parse_angle_interpolation(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.enable_angle_interpolation = enable;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.enable_angle_interpolation = enable;
                                     info!("Updated angle interpolation: {}", enable);
                                 }
                             }
                             // === OpenLoop Parameter Commands ===
                             can_ids::OPENLOOP_RPM_PARAMS => {
                                 if let Some((initial_rpm, target_rpm)) = parse_openloop_rpm_params(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.openloop_initial_rpm = initial_rpm;
-                                    ctx.runtime_config.openloop_target_rpm = target_rpm;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.openloop_initial_rpm = initial_rpm;
+                                    ctx.system.runtime_config.openloop_target_rpm = target_rpm;
                                     info!("Updated openloop RPM params: initial={}, target={}", initial_rpm, target_rpm);
                                 }
                             }
                             can_ids::OPENLOOP_ACCEL_DUTY_PARAMS => {
                                 if let Some((acceleration, duty_ratio)) = parse_openloop_accel_duty_params(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.openloop_acceleration = acceleration;
-                                    ctx.runtime_config.openloop_duty_ratio = duty_ratio;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.openloop_acceleration = acceleration;
+                                    ctx.system.runtime_config.openloop_duty_ratio = duty_ratio;
                                     info!("Updated openloop accel/duty: accel={}, duty={}", acceleration, duty_ratio);
                                 }
                             }
                             // === PWM/CAN/Timing Configuration ===
                             can_ids::PWM_CONFIG => {
                                 if let Some((frequency, dead_time)) = parse_pwm_config(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.pwm_frequency = frequency;
-                                    ctx.runtime_config.pwm_dead_time = dead_time;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.pwm_frequency = frequency;
+                                    ctx.system.runtime_config.pwm_dead_time = dead_time;
                                     info!("Updated PWM config: freq={}Hz, dead_time={}", frequency, dead_time);
                                     info!("⚠ PWM changes require reboot to take effect. Save config and restart.");
                                 }
                             }
                             can_ids::CAN_CONFIG => {
                                 if let Some(bitrate) = parse_can_config(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.can_bitrate = bitrate;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.can_bitrate = bitrate;
                                     info!("Updated CAN config: bitrate={}", bitrate);
                                     info!("⚠ CAN bitrate changes require reboot to take effect. Save config and restart.");
                                 }
                             }
                             can_ids::CONTROL_TIMING => {
                                 if let Some(period_us) = parse_control_timing(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.control_period_us = period_us;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.control_period_us = period_us;
                                     info!("Updated control timing: {}us", period_us);
                                     info!("⚠ Control period changes require reboot to take effect. Save config and restart.");
                                 }
@@ -239,9 +239,9 @@ pub async fn can_task(
                             can_ids::ADVANCE_ANGLE_PARAMS => {
                                 if let Some((base_deg, max_deg)) = parse_advance_angle_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.advance_base_deg = base_deg;
-                                    ctx.runtime_config.advance_max_deg = max_deg;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.advance_base_deg = base_deg;
+                                    ctx.system.runtime_config.advance_max_deg = max_deg;
                                     info!(
                                         "Updated advance angle params: base={}°, max={}°",
                                         base_deg, max_deg
@@ -252,9 +252,9 @@ pub async fn can_task(
                                 if let Some((min_speed, max_speed)) =
                                     parse_advance_angle_speed(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.advance_min_speed = min_speed;
-                                    ctx.runtime_config.advance_max_speed = max_speed;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.advance_min_speed = min_speed;
+                                    ctx.system.runtime_config.advance_max_speed = max_speed;
                                     info!(
                                         "Updated advance angle speed: min={} RPM, max={} RPM",
                                         min_speed, max_speed
@@ -266,9 +266,9 @@ pub async fn can_task(
                                 if let Some((min_voltage, error_threshold)) =
                                     parse_min_voltage_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.min_voltage = min_voltage;
-                                    ctx.runtime_config.min_voltage_error_threshold = error_threshold;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.min_voltage = min_voltage;
+                                    ctx.system.runtime_config.min_voltage_error_threshold = error_threshold;
                                     info!(
                                         "Updated min voltage params: min={}V, threshold={}",
                                         min_voltage, error_threshold
@@ -277,8 +277,8 @@ pub async fn can_task(
                             }
                             can_ids::MAX_SPEED_ACCEL => {
                                 if let Some(max_accel) = parse_max_speed_accel(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.max_speed_acceleration = max_accel;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.max_speed_acceleration = max_accel;
                                     info!("Updated max speed acceleration: {} RPM/s", max_accel);
                                 }
                             }
@@ -287,9 +287,9 @@ pub async fn can_task(
                                 if let Some((speed_threshold, count_threshold)) =
                                     parse_foc_stall_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.foc_stall_speed_threshold = speed_threshold;
-                                    ctx.runtime_config.foc_stall_count_threshold = count_threshold;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.foc_stall_speed_threshold = speed_threshold;
+                                    ctx.system.runtime_config.foc_stall_count_threshold = count_threshold;
                                     info!(
                                         "Updated FOC stall params: speed={} RPM, count={}",
                                         speed_threshold, count_threshold
@@ -301,9 +301,9 @@ pub async fn can_task(
                                 if let Some((forced_cycles, min_cycles)) =
                                     parse_openloop_cycles_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.forced_commutation_cycles = forced_cycles;
-                                    ctx.runtime_config.min_cycles_before_foc = min_cycles;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.forced_commutation_cycles = forced_cycles;
+                                    ctx.system.runtime_config.min_cycles_before_foc = min_cycles;
                                     info!(
                                         "Updated openloop cycles: forced={}, min={}",
                                         forced_cycles, min_cycles
@@ -315,9 +315,9 @@ pub async fn can_task(
                                 if let Some((enabled, dead_time_ns)) =
                                     parse_dead_time_comp_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.dead_time_comp_enabled = enabled;
-                                    ctx.runtime_config.dead_time_ns = dead_time_ns;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.dead_time_comp_enabled = enabled;
+                                    ctx.system.runtime_config.dead_time_ns = dead_time_ns;
                                     info!(
                                         "Updated dead time comp: enabled={}, ns={}",
                                         enabled, dead_time_ns
@@ -328,9 +328,9 @@ pub async fn can_task(
                             can_ids::FLUX_WEAKENING_ENABLE => {
                                 if let Some((enabled, min_speed)) = parse_flux_weakening_enable(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.flux_weakening_enabled = enabled;
-                                    ctx.runtime_config.flux_weakening_min_speed = min_speed;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.flux_weakening_enabled = enabled;
+                                    ctx.system.runtime_config.flux_weakening_min_speed = min_speed;
                                     info!(
                                         "Updated flux weakening: enabled={}, min_speed={} RPM",
                                         enabled, min_speed
@@ -341,9 +341,9 @@ pub async fn can_task(
                                 if let Some((max_speed, max_ratio)) =
                                     parse_flux_weakening_params(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.flux_weakening_max_speed = max_speed;
-                                    ctx.runtime_config.flux_weakening_max_ratio = max_ratio;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.flux_weakening_max_speed = max_speed;
+                                    ctx.system.runtime_config.flux_weakening_max_ratio = max_ratio;
                                     info!(
                                         "Updated flux weakening params: max_speed={} RPM, ratio={}",
                                         max_speed, max_ratio
@@ -352,8 +352,8 @@ pub async fn can_task(
                             }
                             can_ids::FLUX_WEAKENING_VD => {
                                 if let Some(vd_rate_limit) = parse_flux_weakening_vd(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.flux_weakening_vd_rate_limit = vd_rate_limit;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.flux_weakening_vd_rate_limit = vd_rate_limit;
                                     info!("Updated flux weakening Vd rate: {} V/s", vd_rate_limit);
                                 }
                             }
@@ -362,9 +362,9 @@ pub async fn can_task(
                                 if let Some((overvoltage, undervoltage)) =
                                     parse_voltage_monitor_thresholds(data)
                                 {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.voltage_overvoltage_threshold = overvoltage;
-                                    ctx.runtime_config.voltage_undervoltage_threshold = undervoltage;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.voltage_overvoltage_threshold = overvoltage;
+                                    ctx.system.runtime_config.voltage_undervoltage_threshold = undervoltage;
                                     info!(
                                         "Updated voltage thresholds: OV={}V, UV={}V",
                                         overvoltage, undervoltage
@@ -373,8 +373,8 @@ pub async fn can_task(
                             }
                             can_ids::VOLTAGE_MONITOR_FILTER => {
                                 if let Some(alpha) = parse_voltage_monitor_filter(data) {
-                                    let mut ctx = SYSTEM_CONTEXT.lock().await;
-                                    ctx.runtime_config.voltage_filter_alpha = alpha;
+                                    let mut ctx = MOTOR_STATE.lock().await;
+                                    ctx.system.runtime_config.voltage_filter_alpha = alpha;
                                     info!("Updated voltage filter alpha: {}", alpha);
                                 }
                             }

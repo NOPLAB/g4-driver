@@ -181,8 +181,7 @@ impl MotorDynamics {
     /// Calculate power loss components
     pub fn power_loss(&self, state: &MotorState) -> PowerLoss {
         // Copper loss: Pcu = 3/2 * R * (Id² + Iq²)
-        let p_copper =
-            1.5 * self.params.r_s * (state.i_d * state.i_d + state.i_q * state.i_q);
+        let p_copper = 1.5 * self.params.r_s * (state.i_d * state.i_d + state.i_q * state.i_q);
 
         // Friction loss: Pf = Tfriction * ω
         let p_friction = self.friction_torque(state.omega_m).abs() * state.omega_m.abs();
@@ -257,7 +256,10 @@ mod tests {
         let deriv = dynamics.calculate_derivatives(&state, &voltage, &load);
 
         // At rest with Vd applied, current should increase
-        assert!(deriv.di_d_dt > 0.0, "d-axis current should increase with Vd");
+        assert!(
+            deriv.di_d_dt > 0.0,
+            "d-axis current should increase with Vd"
+        );
         // No motion yet
         assert_eq!(deriv.dtheta_dt, 0.0);
     }
@@ -309,10 +311,7 @@ mod tests {
 
         // Steady state voltage that maintains current
         let back_emf = dynamics.back_emf(state.omega_e);
-        let voltage = VoltageInput::new(
-            params.r_s * state.i_d,
-            params.r_s * state.i_q + back_emf,
-        );
+        let voltage = VoltageInput::new(params.r_s * state.i_d, params.r_s * state.i_q + back_emf);
 
         let p_elec = dynamics.electrical_power(&state, &voltage);
         let p_mech = dynamics.mechanical_power(&state);

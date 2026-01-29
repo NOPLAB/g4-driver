@@ -182,14 +182,15 @@ mod tests {
         };
         let mut sim = Simulation::new(params, config);
 
-        let scenario = StepResponse::new(500.0)
-            .with_duration(0.5)
-            .with_criteria(PerformanceCriteria {
-                max_overshoot_percent: 50.0,
-                settling_time_ms: 1000.0,
-                steady_state_error_rpm: 100.0,
-                ..Default::default()
-            });
+        let scenario =
+            StepResponse::new(500.0)
+                .with_duration(0.5)
+                .with_criteria(PerformanceCriteria {
+                    max_overshoot_percent: 50.0,
+                    settling_time_ms: 1000.0,
+                    steady_state_error_rpm: 100.0,
+                    ..Default::default()
+                });
 
         let result = scenario.run(&mut sim);
 

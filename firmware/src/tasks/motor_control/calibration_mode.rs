@@ -6,38 +6,58 @@ use core::f32::consts::PI;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::adapters::HallStateReaderAdapter;
-use crate::config::*;
+use crate::config::voltage;
 use crate::fmt::*;
 // Use bldc crate for portable algorithms
 use bldc::modulation::calculate_svpwm;
 use bldc::transforms::inverse_park;
 
-use bldc::calibration::MotorCalibration;
-
-use crate::adapters::HallSensorAdapter;
-use crate::motor_driver::MotorDriver;
 use crate::state;
 use crate::state::ControlMode;
+
+use super::mode::{ModeContext, ModeResult};
 
 /// キャリブレーションデバッグログカウンタ（1Hz = 10000サイクルごと @ 10kHz）
 static DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// キャリブレーション制御の実行
-///
-/// # 引数
-/// * `calibration` - キャリブレーションコントローラー
-/// * `hall_sensor` - Hallセンサー
-/// * `motor_driver` - モータードライバー
-/// * `dt` - 制御周期 [秒]
-///
-/// # 戻り値
-/// * `Option<ControlMode>` - 完了時は次のモード（ClosedLoopFocまたはOpenLoop）、継続中はNone
-pub async fn execute(
-    calibration: &mut MotorCalibration,
-    hall_sensor: &mut HallSensorAdapter,
-    motor_driver: &mut MotorDriver,
-    dt: f32,
-) -> Option<ControlMode> {
+/// CalibrationModeのハンドラ
+pub struct CalibrationMode;
+
+impl CalibrationMode {
+    /// モード固有の名前
+    #[allow(dead_code)]
+    pub fn name(&self) -> &'static str {
+        "Calibration"
+    }
+
+    /// モード開始時の初期化
+    pub fn on_enter(&self, ctx: &mut ModeContext<'_>, _prev_mode: ControlMode) {
+        // calibrationの準備（トルク設定と開始）はcheck_calibration_requestで既に実行済み
+        DEBUG_COUNTER.store(0, Ordering::Relaxed);
+        let _ = ctx; // 将来の拡張用
+    }
+
+    /// モード終了時のクリーンアップ
+    pub fn on_exit(&self, _ctx: &mut ModeContext<'_>) {
+        // キャリブレーション終了時：特別な処理なし
+    }
+
+    /// 1制御サイクルの実行
+    pub async fn execute(&self, ctx: &mut ModeContext<'_>) -> ModeResult {
+        execute_calibration_internal(ctx).await
+    }
+}
+
+/// シングルトンインスタンス
+pub static CALIBRATION_MODE: CalibrationMode = CalibrationMode;
+
+/// キャリブレーション制御の内部実装
+async fn execute_calibration_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
+    let calibration = &mut ctx.resources.calibration;
+    let hall_sensor = &mut ctx.resources.hall_sensor;
+    let motor_driver = &mut ctx.motor_driver;
+    let dt = ctx.dt;
+
     // Hall センサーを更新して現在の角度を取得
     let (_electrical_angle, _speed_rpm, _hall_state) = hall_sensor.update(dt);
     let sensor_angle = hall_sensor.get_mechanical_angle();
@@ -60,7 +80,7 @@ pub async fn execute(
     match calibration.update(sensor_angle, &hall_reader) {
         Ok((electrical_angle, torque)) => {
             // トルクから電圧指令を計算（トルク 0.0～1.0 → 電圧 0～MAX_VOLTAGE）
-            let v_cmd = torque * DEFAULT_MAX_VOLTAGE;
+            let v_cmd = torque * voltage::DEFAULT_MAX;
 
             // d軸・q軸電圧（キャリブレーション中はシンプルにq軸のみ）
             let vd_cmd = 0.0;
@@ -72,7 +92,7 @@ pub async fn execute(
             // SVPWM計算（実際のPWM最大値を使用）
             let pwm_max_duty = motor_driver.max_duty();
             let (duty_u, duty_v, duty_w) =
-                calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, pwm_max_duty);
+                calculate_svpwm(v_alpha, v_beta, voltage::DEFAULT_DC_BUS, pwm_max_duty);
 
             // PWM出力
             motor_driver.set_duty_uvw(duty_u, duty_v, duty_w);
@@ -104,7 +124,7 @@ pub async fn execute(
                     state::motor_context().await.control_mode = ControlMode::ClosedLoopFoc;
 
                     info!("Switching to ClosedLoopFoc mode");
-                    return Some(ControlMode::ClosedLoopFoc);
+                    return ModeResult::TransitionTo(ControlMode::ClosedLoopFoc);
                 } else {
                     error!("Calibration failed!");
                     // エラー時はモーターを停止
@@ -113,7 +133,7 @@ pub async fn execute(
                     // OpenLoopモードに戻る
                     state::motor_context().await.control_mode = ControlMode::OpenLoop;
 
-                    return Some(ControlMode::OpenLoop);
+                    return ModeResult::TransitionTo(ControlMode::OpenLoop);
                 }
             }
         }
@@ -125,9 +145,9 @@ pub async fn execute(
             // OpenLoopモードに戻る
             state::motor_context().await.control_mode = ControlMode::OpenLoop;
 
-            return Some(ControlMode::OpenLoop);
+            return ModeResult::TransitionTo(ControlMode::OpenLoop);
         }
     }
 
-    None // キャリブレーション継続中
+    ModeResult::Continue
 }

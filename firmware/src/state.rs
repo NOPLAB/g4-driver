@@ -3,9 +3,9 @@
 //! タスク間で共有される状態をMutexで保護して管理します。
 //! 状態は論理的にグループ化されたコンテキストに整理されています。
 //!
-//! パフォーマンス最適化:
-//! - ステータス更新はAtomic変数を使用（FOC/OpenLoopの高頻度更新用）
-//! - 複合操作関数で複数のMutexロックを1回に統合
+//! ## 構造
+//! - `MotorState`: 制御設定・キャリブレーション・システム設定をMutexで保護
+//! - `RuntimeCounters`: 制御ループ用カウンタをAtomicでロックフリー管理
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -14,8 +14,12 @@ use embassy_sync::mutex::Mutex;
 
 use bldc::calibration::CalibrationResult;
 
-use crate::config::{StoredConfig, DEFAULT_SPEED_KI, DEFAULT_SPEED_KP};
+use crate::config::{speed, StoredConfig};
 use crate::voltage_monitor::VoltageMonitorState;
+
+// ========================================
+// モーター制御モード
+// ========================================
 
 /// モーター制御モード
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,45 +31,39 @@ pub enum ControlMode {
     /// キャリブレーションモード（電気角オフセット・回転方向の自動検出）
     Calibration,
 }
-use g4_driver_protocol::MotorStatus;
 
-/// モーター制御コンテキスト
-///
-/// モーター制御に関連する全ての状態を一つの構造体にまとめます。
+// ========================================
+// 統合状態構造体: MotorState
+// ========================================
+
+/// 制御パラメータ
 #[derive(Clone, Copy)]
-pub struct MotorContext {
+pub struct ControlParams {
     /// 目標速度 [RPM]
     pub target_speed: f32,
     /// 速度PIコントローラのゲイン (Kp, Ki)
     pub pi_gains: (f32, f32),
     /// モーター有効/無効フラグ
     pub enabled: bool,
-    /// モーターステータス（CAN送信用）
-    /// 注: 高速制御ループではAtomic変数を使用（update_motor_status_atomic）
-    #[allow(dead_code)]
-    pub status: MotorStatus,
-    /// モーター制御モード（ClosedLoopFoc / Calibration等）
+    /// モーター制御モード
     pub control_mode: ControlMode,
 }
 
-impl MotorContext {
-    /// デフォルト値で新しいモーターコンテキストを作成
+impl ControlParams {
+    /// デフォルト値で新しい制御パラメータを作成
     pub const fn new() -> Self {
         Self {
             target_speed: 3000.0,
-            pi_gains: (DEFAULT_SPEED_KP, DEFAULT_SPEED_KI),
+            pi_gains: (speed::DEFAULT_KP, speed::DEFAULT_KI),
             enabled: true,
-            status: MotorStatus::new(),
             control_mode: ControlMode::OpenLoop,
         }
     }
 }
 
-/// キャリブレーションコンテキスト
-///
-/// キャリブレーションに関連する全ての状態を一つの構造体にまとめます。
+/// キャリブレーションパラメータ
 #[derive(Clone, Copy)]
-pub struct CalibrationContext {
+pub struct CalibrationParams {
     /// キャリブレーション開始フラグ
     pub request: bool,
     /// キャリブレーション用トルク値 (0-100)
@@ -74,8 +72,8 @@ pub struct CalibrationContext {
     pub result: CalibrationResult,
 }
 
-impl CalibrationContext {
-    /// デフォルト値で新しいキャリブレーションコンテキストを作成
+impl CalibrationParams {
+    /// デフォルト値で新しいキャリブレーションパラメータを作成
     pub const fn new() -> Self {
         Self {
             request: true,
@@ -89,11 +87,9 @@ impl CalibrationContext {
     }
 }
 
-/// システムコンテキスト
-///
-/// システム全体の状態を一つの構造体にまとめます。
+/// システムパラメータ
 #[derive(Clone, Copy)]
-pub struct SystemContext {
+pub struct SystemParams {
     /// 電圧監視ステータス（CAN送信用）
     pub voltage_state: VoltageMonitorState,
     /// ランタイム設定（フラッシュから読み込まれた設定）
@@ -104,8 +100,8 @@ pub struct SystemContext {
     pub config_crc_valid: bool,
 }
 
-impl SystemContext {
-    /// デフォルト値で新しいシステムコンテキストを作成
+impl SystemParams {
+    /// デフォルト値で新しいシステムパラメータを作成
     pub const fn new() -> Self {
         Self {
             voltage_state: VoltageMonitorState::new(),
@@ -116,59 +112,293 @@ impl SystemContext {
     }
 }
 
-/// グローバルモーターコンテキスト
-pub static MOTOR_CONTEXT: Mutex<ThreadModeRawMutex, MotorContext> = Mutex::new(MotorContext::new());
+/// モーター状態（統合）
+///
+/// 制御・キャリブレーション・システムの全状態を1つの構造体に統合
+#[derive(Clone, Copy)]
+pub struct MotorState {
+    /// 制御パラメータ
+    pub control: ControlParams,
+    /// キャリブレーションパラメータ
+    pub calibration: CalibrationParams,
+    /// システムパラメータ
+    pub system: SystemParams,
+}
+
+impl MotorState {
+    /// デフォルト値で新しいモーター状態を作成
+    pub const fn new() -> Self {
+        Self {
+            control: ControlParams::new(),
+            calibration: CalibrationParams::new(),
+            system: SystemParams::new(),
+        }
+    }
+}
+
+/// グローバルモーター状態（統合）
+pub static MOTOR_STATE: Mutex<ThreadModeRawMutex, MotorState> = Mutex::new(MotorState::new());
 
 // ========================================
-// Atomic変数（高速ステータス更新用）
+// RuntimeCounters: ロックフリーカウンタ
 // ========================================
-// FOC/OpenLoopの制御ループ内で高頻度にステータスを更新するため、
-// Mutexのオーバーヘッドを回避するためにAtomic変数を使用
 
-/// モーター速度（RPM）のビット表現
-static STATUS_SPEED_RPM_BITS: AtomicU32 = AtomicU32::new(0);
+/// FOC制御用カウンタ
+pub struct FocCounters {
+    /// 脱調（速度低下）の連続カウンタ
+    stall_counter: AtomicU32,
+    /// 無効Hall状態の連続カウンタ
+    invalid_hall_counter: AtomicU32,
+}
 
-/// 電気角（ラジアン）のビット表現
-static STATUS_ELECTRICAL_ANGLE_BITS: AtomicU32 = AtomicU32::new(0);
+impl FocCounters {
+    /// 新しいFocCountersを作成
+    pub const fn new() -> Self {
+        Self {
+            stall_counter: AtomicU32::new(0),
+            invalid_hall_counter: AtomicU32::new(0),
+        }
+    }
 
-/// グローバルキャリブレーションコンテキスト
-pub static CALIBRATION_CONTEXT: Mutex<ThreadModeRawMutex, CalibrationContext> =
-    Mutex::new(CalibrationContext::new());
+    /// 脱調カウンタをインクリメントし、新しい値を返す
+    #[inline(always)]
+    pub fn increment_stall(&self) -> u32 {
+        self.stall_counter.fetch_add(1, Ordering::Relaxed) + 1
+    }
 
-/// グローバルシステムコンテキスト
-pub static SYSTEM_CONTEXT: Mutex<ThreadModeRawMutex, SystemContext> =
-    Mutex::new(SystemContext::new());
+    /// 脱調カウンタをリセット
+    #[inline(always)]
+    pub fn reset_stall(&self) {
+        self.stall_counter.store(0, Ordering::Relaxed);
+    }
+
+    /// 無効Hallカウンタをインクリメントし、新しい値を返す
+    #[inline(always)]
+    pub fn increment_invalid_hall(&self) -> u32 {
+        self.invalid_hall_counter.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// 無効Hallカウンタをリセット
+    #[inline(always)]
+    pub fn reset_invalid_hall(&self) {
+        self.invalid_hall_counter.store(0, Ordering::Relaxed);
+    }
+
+    /// 全カウンタをリセット
+    #[inline(always)]
+    pub fn reset_all(&self) {
+        self.stall_counter.store(0, Ordering::Relaxed);
+        self.invalid_hall_counter.store(0, Ordering::Relaxed);
+    }
+}
+
+/// ステータス出力（CAN送信用）
+pub struct StatusOutput {
+    /// モーター速度（RPM）のビット表現
+    speed_rpm_bits: AtomicU32,
+    /// 電気角（ラジアン）のビット表現
+    electrical_angle_bits: AtomicU32,
+}
+
+impl StatusOutput {
+    /// 新しいStatusOutputを作成
+    pub const fn new() -> Self {
+        Self {
+            speed_rpm_bits: AtomicU32::new(0),
+            electrical_angle_bits: AtomicU32::new(0),
+        }
+    }
+
+    /// ステータスを更新
+    #[inline(always)]
+    pub fn update(&self, speed_rpm: f32, electrical_angle: f32) {
+        self.speed_rpm_bits
+            .store(speed_rpm.to_bits(), Ordering::Relaxed);
+        self.electrical_angle_bits
+            .store(electrical_angle.to_bits(), Ordering::Relaxed);
+    }
+
+    /// ステータスを取得
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub fn get(&self) -> (f32, f32) {
+        (
+            f32::from_bits(self.speed_rpm_bits.load(Ordering::Relaxed)),
+            f32::from_bits(self.electrical_angle_bits.load(Ordering::Relaxed)),
+        )
+    }
+}
+
+/// OpenLoop制御用カウンタ
+pub struct OpenLoopCounters {
+    /// 実行カウンタ
+    execution_counter: AtomicU32,
+    /// ログカウンタ
+    log_counter: AtomicU32,
+    /// 脱調回復モードフラグ（0=通常、1=回復）
+    recovery_mode: AtomicU32,
+}
+
+impl OpenLoopCounters {
+    /// 新しいOpenLoopCountersを作成
+    pub const fn new() -> Self {
+        Self {
+            execution_counter: AtomicU32::new(0),
+            log_counter: AtomicU32::new(0),
+            recovery_mode: AtomicU32::new(0),
+        }
+    }
+
+    /// 実行カウンタをインクリメントし、前の値を返す
+    #[inline(always)]
+    pub fn increment_execution(&self) -> u32 {
+        self.execution_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// ログカウンタをインクリメントし、前の値を返す
+    #[inline(always)]
+    pub fn increment_log(&self) -> u32 {
+        self.log_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// ログカウンタをリセット
+    #[inline(always)]
+    pub fn reset_log(&self) {
+        self.log_counter.store(0, Ordering::Relaxed);
+    }
+
+    /// 回復モードかどうかを取得
+    #[inline(always)]
+    pub fn is_recovery(&self) -> bool {
+        self.recovery_mode.load(Ordering::Relaxed) != 0
+    }
+
+    /// 通常起動用リセット
+    #[inline(always)]
+    pub fn reset_for_normal(&self) {
+        self.execution_counter.store(0, Ordering::Relaxed);
+        self.log_counter.store(0, Ordering::Relaxed);
+        self.recovery_mode.store(0, Ordering::Relaxed);
+    }
+
+    /// 脱調回復用リセット
+    #[inline(always)]
+    pub fn reset_for_recovery(&self) {
+        self.execution_counter.store(0, Ordering::Relaxed);
+        self.log_counter.store(0, Ordering::Relaxed);
+        self.recovery_mode.store(1, Ordering::Relaxed);
+    }
+}
+
+/// 制御ループ用ランタイムカウンタ（ロックフリー）
+pub struct RuntimeCounters {
+    /// FOC関連カウンタ
+    pub foc: FocCounters,
+    /// OpenLoop関連カウンタ
+    pub openloop: OpenLoopCounters,
+    /// ステータス出力
+    pub status: StatusOutput,
+}
+
+impl RuntimeCounters {
+    /// 新しいRuntimeCountersを作成
+    pub const fn new() -> Self {
+        Self {
+            foc: FocCounters::new(),
+            openloop: OpenLoopCounters::new(),
+            status: StatusOutput::new(),
+        }
+    }
+}
+
+/// グローバルランタイムカウンタ
+pub static RUNTIME: RuntimeCounters = RuntimeCounters::new();
 
 // ========================================
-// 直接コンテキストアクセス関数
+// 直接アクセス関数
 // ========================================
-// 複数のフィールドを同時に読み書きする場合に有用。
-// 1回のロックで複数の操作を行うことでオーバーヘッドを削減。
 
 pub use embassy_sync::mutex::MutexGuard;
 
-/// モーターコンテキストへの直接アクセスを取得
+/// モーター状態への直接アクセスを取得
 ///
 /// # Example
 /// ```ignore
 /// {
-///     let mut ctx = state::motor_context().await;
-///     let speed = ctx.target_speed;
-///     ctx.target_speed = 3000.0;
+///     let mut state = state::motor_state().await;
+///     let speed = state.control.target_speed;
+///     state.control.target_speed = 3000.0;
 /// }
 /// ```
-pub async fn motor_context() -> MutexGuard<'static, ThreadModeRawMutex, MotorContext> {
-    MOTOR_CONTEXT.lock().await
+#[allow(dead_code)]
+pub async fn motor_state() -> MutexGuard<'static, ThreadModeRawMutex, MotorState> {
+    MOTOR_STATE.lock().await
 }
 
-/// キャリブレーションコンテキストへの直接アクセスを取得
-pub async fn calibration_context() -> MutexGuard<'static, ThreadModeRawMutex, CalibrationContext> {
-    CALIBRATION_CONTEXT.lock().await
+/// 制御パラメータへのアクセス（motor_contextの代替）
+pub async fn motor_context() -> MotorControlGuard {
+    MotorControlGuard(MOTOR_STATE.lock().await)
 }
 
-/// システムコンテキストへの直接アクセスを取得
-pub async fn system_context() -> MutexGuard<'static, ThreadModeRawMutex, SystemContext> {
-    SYSTEM_CONTEXT.lock().await
+/// キャリブレーションパラメータへのアクセス（calibration_contextの代替）
+pub async fn calibration_context() -> CalibrationGuard {
+    CalibrationGuard(MOTOR_STATE.lock().await)
+}
+
+/// システムパラメータへのアクセス（system_contextの代替）
+pub async fn system_context() -> SystemGuard {
+    SystemGuard(MOTOR_STATE.lock().await)
+}
+
+/// 制御パラメータへのアクセスを提供するガード
+pub struct MotorControlGuard(MutexGuard<'static, ThreadModeRawMutex, MotorState>);
+
+impl core::ops::Deref for MotorControlGuard {
+    type Target = ControlParams;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.control
+    }
+}
+
+impl core::ops::DerefMut for MotorControlGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.control
+    }
+}
+
+/// キャリブレーションパラメータへのアクセスを提供するガード
+pub struct CalibrationGuard(MutexGuard<'static, ThreadModeRawMutex, MotorState>);
+
+impl core::ops::Deref for CalibrationGuard {
+    type Target = CalibrationParams;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.calibration
+    }
+}
+
+impl core::ops::DerefMut for CalibrationGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.calibration
+    }
+}
+
+/// システムパラメータへのアクセスを提供するガード
+pub struct SystemGuard(MutexGuard<'static, ThreadModeRawMutex, MotorState>);
+
+impl core::ops::Deref for SystemGuard {
+    type Target = SystemParams;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.system
+    }
+}
+
+impl core::ops::DerefMut for SystemGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.system
+    }
 }
 
 // ========================================
@@ -177,25 +407,25 @@ pub async fn system_context() -> MutexGuard<'static, ThreadModeRawMutex, SystemC
 
 /// モーターを緊急停止（有効フラグをfalseにし、目標速度を0に設定）
 pub async fn emergency_stop() {
-    let mut ctx = MOTOR_CONTEXT.lock().await;
-    ctx.enabled = false;
-    ctx.target_speed = 0.0;
+    let mut state = MOTOR_STATE.lock().await;
+    state.control.enabled = false;
+    state.control.target_speed = 0.0;
 }
 
 /// システム設定を一括更新
 pub async fn update_system_config(config: StoredConfig, version: u16, crc_valid: bool) {
-    let mut ctx = SYSTEM_CONTEXT.lock().await;
-    ctx.runtime_config = config;
-    ctx.config_version = version;
-    ctx.config_crc_valid = crc_valid;
+    let mut state = MOTOR_STATE.lock().await;
+    state.system.runtime_config = config;
+    state.system.config_version = version;
+    state.system.config_crc_valid = crc_valid;
 }
 
 /// キャリブレーション結果をランタイム設定から適用
 pub async fn apply_calibration_from_config(config: &StoredConfig) {
-    let mut ctx = CALIBRATION_CONTEXT.lock().await;
-    ctx.result.electrical_offset = config.calibration_electrical_offset;
-    ctx.result.direction_inversed = config.calibration_direction_inversed;
-    ctx.result.success = config.calibration_success;
+    let mut state = MOTOR_STATE.lock().await;
+    state.calibration.result.electrical_offset = config.calibration_electrical_offset;
+    state.calibration.result.direction_inversed = config.calibration_direction_inversed;
+    state.calibration.result.success = config.calibration_success;
 }
 
 // ========================================
@@ -207,9 +437,9 @@ pub async fn apply_calibration_from_config(config: &StoredConfig) {
 /// FOC/OpenLoopの制御ループ内で高頻度に呼び出されるため、
 /// Mutexのオーバーヘッドを回避するためにAtomic変数を使用します。
 #[inline(always)]
+#[allow(dead_code)]
 pub fn update_motor_status_atomic(speed_rpm: f32, electrical_angle: f32) {
-    STATUS_SPEED_RPM_BITS.store(speed_rpm.to_bits(), Ordering::Relaxed);
-    STATUS_ELECTRICAL_ANGLE_BITS.store(electrical_angle.to_bits(), Ordering::Relaxed);
+    RUNTIME.status.update(speed_rpm, electrical_angle);
 }
 
 /// モーターステータスをAtomic変数から取得（ロックフリー）
@@ -218,10 +448,7 @@ pub fn update_motor_status_atomic(speed_rpm: f32, electrical_angle: f32) {
 #[inline(always)]
 #[allow(dead_code)]
 pub fn get_motor_status_atomic() -> (f32, f32) {
-    (
-        f32::from_bits(STATUS_SPEED_RPM_BITS.load(Ordering::Relaxed)),
-        f32::from_bits(STATUS_ELECTRICAL_ANGLE_BITS.load(Ordering::Relaxed)),
-    )
+    RUNTIME.status.get()
 }
 
 // ========================================
@@ -237,14 +464,14 @@ pub struct FocInputParams {
     pub pi_gains: (f32, f32),
 }
 
-/// FOC制御ループの入力パラメータを一括取得（1回のロックで複数値取得）
+/// FOC制御ループの入力パラメータを一括取得（1回のMutexロックで統合）
 ///
 /// 従来は `get_target_speed()` と `get_pi_gains()` を個別に呼び出していたが、
 /// この関数で1回のMutexロックに統合することでオーバーヘッドを削減します。
 pub async fn get_foc_input_params() -> FocInputParams {
-    let ctx = MOTOR_CONTEXT.lock().await;
+    let state = MOTOR_STATE.lock().await;
     FocInputParams {
-        target_speed: ctx.target_speed,
-        pi_gains: ctx.pi_gains,
+        target_speed: state.control.target_speed,
+        pi_gains: state.control.pi_gains,
     }
 }

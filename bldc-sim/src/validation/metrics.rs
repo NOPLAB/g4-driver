@@ -73,8 +73,8 @@ impl MetricsCalculator {
         let n = (history.len() / 10).max(1); // Last 10% or at least 1
         let last_samples: Vec<_> = history.iter().rev().take(n).collect();
 
-        let avg_speed: f32 = last_samples.iter().map(|s| s.speed_rpm).sum::<f32>()
-            / last_samples.len() as f32;
+        let avg_speed: f32 =
+            last_samples.iter().map(|s| s.speed_rpm).sum::<f32>() / last_samples.len() as f32;
 
         (avg_speed - self.target_speed).abs()
     }
@@ -93,10 +93,7 @@ impl MetricsCalculator {
             return 0.0;
         }
 
-        let sum_sq: f32 = history
-            .iter()
-            .map(|s| s.i_d * s.i_d + s.i_q * s.i_q)
-            .sum();
+        let sum_sq: f32 = history.iter().map(|s| s.i_d * s.i_d + s.i_q * s.i_q).sum();
 
         libm::sqrtf(sum_sq / history.len() as f32)
     }

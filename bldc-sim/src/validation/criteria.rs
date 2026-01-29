@@ -15,12 +15,7 @@ pub struct PerformanceCriteria {
 
 impl PerformanceCriteria {
     /// Create new criteria
-    pub fn new(
-        max_overshoot: f32,
-        settling_time: f32,
-        ss_error: f32,
-        rise_time: f32,
-    ) -> Self {
+    pub fn new(max_overshoot: f32, settling_time: f32, ss_error: f32, rise_time: f32) -> Self {
         Self {
             max_overshoot_percent: max_overshoot,
             settling_time_ms: settling_time,

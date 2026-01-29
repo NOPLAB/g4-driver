@@ -47,8 +47,7 @@ pub fn plot_speed<P: AsRef<Path>>(
     target_rpm: Option<f32>,
     config: &PlotConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new(path.as_ref(), (config.width, config.height))
-        .into_drawing_area();
+    let root = BitMapBackend::new(path.as_ref(), (config.width, config.height)).into_drawing_area();
     root.fill(&WHITE)?;
 
     // Find data range
@@ -109,8 +108,7 @@ pub fn plot_multi_panel<P: AsRef<Path>>(
     history: &[StateSnapshot],
     config: &PlotConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new(path.as_ref(), (config.width, config.height))
-        .into_drawing_area();
+    let root = BitMapBackend::new(path.as_ref(), (config.width, config.height)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let panels = root.split_evenly((3, 1));
@@ -187,7 +185,11 @@ pub fn plot_multi_panel<P: AsRef<Path>>(
             .y_label_area_size(50)
             .build_cartesian_2d(0.0f32..t_max, 0.0f32..torque_max.max(0.001))?;
 
-        chart.configure_mesh().x_desc("Time [s]").y_desc("N·m").draw()?;
+        chart
+            .configure_mesh()
+            .x_desc("Time [s]")
+            .y_desc("N·m")
+            .draw()?;
 
         chart.draw_series(LineSeries::new(
             history.iter().map(|s| (s.time, s.torque)),

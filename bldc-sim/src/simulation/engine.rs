@@ -31,7 +31,7 @@ pub struct SimConfig {
 impl Default for SimConfig {
     fn default() -> Self {
         Self {
-            dt: 0.00001,           // 10 μs physics step
+            dt: 0.00001,            // 10 μs physics step
             control_period: 0.0004, // 400 μs = 2.5 kHz control loop
             duration: 1.0,          // 1 second simulation
             integration_method: IntegrationMethod::RungeKutta4,

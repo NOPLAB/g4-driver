@@ -101,12 +101,7 @@ impl ThermalModel {
     ///
     /// # Returns
     /// Rate of temperature change [°C/s]
-    pub fn temperature_derivative(
-        &self,
-        p_loss: f32,
-        temperature: f32,
-        ambient: f32,
-    ) -> f32 {
+    pub fn temperature_derivative(&self, p_loss: f32, temperature: f32, ambient: f32) -> f32 {
         if !self.enabled {
             return 0.0;
         }
@@ -125,13 +120,7 @@ impl ThermalModel {
     ///
     /// # Returns
     /// New temperature [°C]
-    pub fn step(
-        &self,
-        temperature: f32,
-        p_loss: f32,
-        ambient: f32,
-        dt: f32,
-    ) -> f32 {
+    pub fn step(&self, temperature: f32, p_loss: f32, ambient: f32, dt: f32) -> f32 {
         if !self.enabled {
             return temperature;
         }

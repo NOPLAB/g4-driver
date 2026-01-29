@@ -9,11 +9,11 @@ use bldc::control::PiController;
 use core::f32::consts::PI;
 
 use crate::adapters::HallSensorAdapter;
-use crate::config::*;
+use crate::config::{hall, motor, openloop, speed, voltage};
 use crate::hall_tim;
+use crate::state::RUNTIME;
 
 use super::foc_mode;
-use super::openloop_mode;
 
 /// モーター制御に必要な全リソース
 pub struct ControllerResources {
@@ -38,29 +38,29 @@ impl ControllerResources {
     pub fn new(max_duty: u16) -> Self {
         // ホールセンサ初期化（foc-simple互換の機械角ベース計算）
         let mut hall_sensor =
-            HallSensorAdapter::new(DEFAULT_POLE_PAIRS, DEFAULT_SPEED_FILTER_ALPHA);
+            HallSensorAdapter::new(motor::DEFAULT_POLE_PAIRS, speed::DEFAULT_FILTER_ALPHA);
         hall_sensor.set_interpolation(false); // 角度補間を無効化（ノイズ対策）
 
         // 電気オフセットを設定（キャリブレーション値）
-        let offset_rad = DEFAULT_HALL_ANGLE_OFFSET_DEG * PI / 180.0;
+        let offset_rad = hall::DEFAULT_ANGLE_OFFSET_DEG * PI / 180.0;
         hall_sensor.set_electrical_offset(offset_rad);
 
         // 速度PIコントローラ初期化（アンチワインドアップ有効）
         let mut speed_pi =
-            PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, DEFAULT_MAX_VOLTAGE);
+            PiController::new_symmetric(speed::DEFAULT_KP, speed::DEFAULT_KI, voltage::DEFAULT_MAX);
         speed_pi.set_anti_windup(true);
 
         // オープンループ始動コントローラ初期化
-        let openloop = SixStepController::new(
+        let openloop_ctrl = SixStepController::new(
             openloop::DEFAULT_INITIAL_RPM,
             openloop::DEFAULT_TARGET_RPM,
-            openloop::DEFAULT_ACCELERATION_RPM_PER_S,
+            openloop::DEFAULT_ACCELERATION,
             openloop::DEFAULT_DUTY_RATIO,
-            DEFAULT_POLE_PAIRS,
+            motor::DEFAULT_POLE_PAIRS,
         );
 
         // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
-        let calibration = MotorCalibration::new(DEFAULT_POLE_PAIRS, 0.1);
+        let calibration = MotorCalibration::new(motor::DEFAULT_POLE_PAIRS, 0.1);
 
         // デッドタイム補償器初期化
         let dead_time_comp = foc_mode::create_dead_time_compensation(max_duty);
@@ -71,7 +71,7 @@ impl ControllerResources {
         Self {
             hall_sensor,
             speed_pi,
-            openloop,
+            openloop: openloop_ctrl,
             calibration,
             dead_time_comp,
             flux_weakening,
@@ -79,26 +79,36 @@ impl ControllerResources {
         }
     }
 
-    /// 全リソースをリセット（モーター停止時に呼び出し）
-    pub fn reset_all(&mut self) {
+    /// 共通のリセット処理
+    fn reset_common(&mut self) {
         self.speed_pi.reset();
         self.hall_sensor.reset();
         self.openloop.reset();
-        openloop_mode::reset_execution_counter();
         hall_tim::reset_state();
         self.flux_weakening.reset();
         self.ramped_target_speed = 0.0;
     }
 
-    /// OpenLoopモード用の準備
-    pub fn prepare_for_openloop(&mut self) {
-        self.speed_pi.reset();
-        self.hall_sensor.reset();
-        self.openloop.reset();
-        openloop_mode::reset_execution_counter();
-        foc_mode::reset_stall_counter();
-        self.flux_weakening.reset();
-        self.ramped_target_speed = 0.0;
+    /// 全リソースをリセット（モーター停止時に呼び出し）
+    pub fn reset_all(&mut self) {
+        self.reset_common();
+        RUNTIME.openloop.reset_for_normal();
+        RUNTIME.foc.reset_all();
+    }
+
+    /// OpenLoopモード用の準備（通常起動・脱調回復共通）
+    ///
+    /// # Arguments
+    /// * `is_recovery` - 脱調回復モードかどうか
+    pub fn prepare_for_openloop_or_recovery(&mut self, is_recovery: bool) {
+        self.reset_common();
+        RUNTIME.foc.reset_all();
+
+        if is_recovery {
+            RUNTIME.openloop.reset_for_recovery();
+        } else {
+            RUNTIME.openloop.reset_for_normal();
+        }
     }
 
     /// FOCモード移行時の準備
@@ -110,7 +120,7 @@ impl ControllerResources {
         self.speed_pi.reset();
 
         // FOCの脱落カウンタをリセット
-        foc_mode::reset_stall_counter();
+        RUNTIME.foc.reset_all();
 
         // Hall センサーの速度フィルタを現在の速度で初期化
         self.hall_sensor.reset_speed_filter(current_rpm);

@@ -60,9 +60,17 @@ pub enum SpeedProfile {
     /// Constant target speed
     Constant(f32),
     /// Step change at specified time
-    Step { initial: f32, final_value: f32, step_time: f32 },
+    Step {
+        initial: f32,
+        final_value: f32,
+        step_time: f32,
+    },
     /// Linear ramp
-    Ramp { initial: f32, final_value: f32, ramp_time: f32 },
+    Ramp {
+        initial: f32,
+        final_value: f32,
+        ramp_time: f32,
+    },
     /// Custom profile function
     Custom(Vec<(f32, f32)>), // (time, speed) points
 }
@@ -72,14 +80,22 @@ impl SpeedProfile {
     pub fn at_time(&self, time: f32) -> f32 {
         match self {
             SpeedProfile::Constant(speed) => *speed,
-            SpeedProfile::Step { initial, final_value, step_time } => {
+            SpeedProfile::Step {
+                initial,
+                final_value,
+                step_time,
+            } => {
                 if time < *step_time {
                     *initial
                 } else {
                     *final_value
                 }
             }
-            SpeedProfile::Ramp { initial, final_value, ramp_time } => {
+            SpeedProfile::Ramp {
+                initial,
+                final_value,
+                ramp_time,
+            } => {
                 if time <= 0.0 {
                     *initial
                 } else if time >= *ramp_time {
@@ -117,7 +133,11 @@ pub enum LoadProfile {
     /// Constant load
     Constant(f32),
     /// Step change at specified time
-    Step { initial: f32, final_value: f32, step_time: f32 },
+    Step {
+        initial: f32,
+        final_value: f32,
+        step_time: f32,
+    },
     /// Custom profile
     Custom(Vec<(f32, f32)>),
 }
@@ -128,7 +148,11 @@ impl LoadProfile {
         match self {
             LoadProfile::None => 0.0,
             LoadProfile::Constant(torque) => *torque,
-            LoadProfile::Step { initial, final_value, step_time } => {
+            LoadProfile::Step {
+                initial,
+                final_value,
+                step_time,
+            } => {
                 if time < *step_time {
                     *initial
                 } else {

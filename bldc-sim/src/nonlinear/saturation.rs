@@ -111,7 +111,10 @@ mod tests {
         let eff_low = sat.apply(lambda_m, 1.0);
         let eff_high = sat.apply(lambda_m, 5.0);
 
-        assert!(eff_high < eff_low, "Higher current should cause more saturation");
+        assert!(
+            eff_high < eff_low,
+            "Higher current should cause more saturation"
+        );
     }
 
     #[test]

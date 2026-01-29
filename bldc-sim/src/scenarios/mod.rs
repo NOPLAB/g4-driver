@@ -16,6 +16,4 @@ pub use disturbance::LoadDisturbance;
 pub use ramp::RampResponse;
 pub use startup::StartupScenario;
 pub use step::StepResponse;
-pub use traits::{
-    LoadProfile, Scenario, ScenarioMetrics, ScenarioResult, SpeedProfile,
-};
+pub use traits::{LoadProfile, Scenario, ScenarioMetrics, ScenarioResult, SpeedProfile};

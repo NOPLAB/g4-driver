@@ -54,5 +54,9 @@ pub mod thermal;
 pub mod validation;
 
 // Re-export commonly used types
-pub use motor_model::{MotorDynamics, MotorParams, MotorState, VoltageInput, LoadTorque, StateSnapshot};
-pub use simulation::{Integrator, IntegrationMethod, Simulation, SimConfig, SimStepResult, HallEmulator};
+pub use motor_model::{
+    LoadTorque, MotorDynamics, MotorParams, MotorState, StateSnapshot, VoltageInput,
+};
+pub use simulation::{
+    HallEmulator, IntegrationMethod, Integrator, SimConfig, SimStepResult, Simulation,
+};

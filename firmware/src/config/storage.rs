@@ -175,15 +175,15 @@ impl StoredConfig {
             magic: CONFIG_MAGIC,
             version: CONFIG_VERSION,
             _padding: 0,
-            speed_kp: params::DEFAULT_SPEED_KP,
-            speed_ki: params::DEFAULT_SPEED_KI,
-            max_voltage: params::DEFAULT_MAX_VOLTAGE,
-            v_dc_bus: params::DEFAULT_V_DC_BUS,
-            pole_pairs: params::DEFAULT_POLE_PAIRS,
+            speed_kp: params::speed::DEFAULT_KP,
+            speed_ki: params::speed::DEFAULT_KI,
+            max_voltage: params::voltage::DEFAULT_MAX,
+            v_dc_bus: params::voltage::DEFAULT_DC_BUS,
+            pole_pairs: params::motor::DEFAULT_POLE_PAIRS,
             max_duty: 100, // 注: この値は使用されず、実行時にPWMから取得される
-            speed_filter_alpha: params::DEFAULT_SPEED_FILTER_ALPHA,
-            hall_angle_offset: params::DEFAULT_HALL_ANGLE_OFFSET_DEG, // デフォルトはオフセットなし
-            enable_angle_interpolation: true,                         // デフォルトで有効
+            speed_filter_alpha: params::speed::DEFAULT_FILTER_ALPHA,
+            hall_angle_offset: params::hall::DEFAULT_ANGLE_OFFSET_DEG, // デフォルトはオフセットなし
+            enable_angle_interpolation: true,                          // デフォルトで有効
             _padding2: [0; 2],
             calibration_electrical_offset: 0.0, // キャリブレーション未実施
             calibration_direction_inversed: false,
@@ -191,26 +191,26 @@ impl StoredConfig {
             _padding_calib: [0; 2],
             openloop_initial_rpm: params::openloop::DEFAULT_INITIAL_RPM,
             openloop_target_rpm: params::openloop::DEFAULT_TARGET_RPM,
-            openloop_acceleration: params::openloop::DEFAULT_ACCELERATION_RPM_PER_S,
+            openloop_acceleration: params::openloop::DEFAULT_ACCELERATION,
             openloop_duty_ratio: params::openloop::DEFAULT_DUTY_RATIO,
             _padding3: 0,
             pwm_frequency: params::pwm::DEFAULT_FREQUENCY.0,
             pwm_dead_time: params::pwm::DEFAULT_DEAD_TIME,
             _padding4: 0,
             can_bitrate: params::can::DEFAULT_BITRATE,
-            control_period_us: params::DEFAULT_CONTROL_PERIOD_US,
+            control_period_us: params::control::DEFAULT_PERIOD_US,
             // 進角パラメータ
             advance_base_deg: params::advance_angle::BASE_ADVANCE_DEG,
             advance_max_deg: params::advance_angle::MAX_ADVANCE_DEG,
             advance_max_speed: params::advance_angle::MAX_SPEED_FOR_ADVANCE,
             advance_min_speed: params::advance_angle::MIN_SPEED_FOR_ADVANCE,
             // 最小電圧関連
-            min_voltage: params::MIN_VOLTAGE,
-            min_voltage_error_threshold: params::MIN_VOLTAGE_ERROR_THRESHOLD,
-            max_speed_acceleration: params::MAX_SPEED_ACCELERATION,
+            min_voltage: params::voltage::MIN,
+            min_voltage_error_threshold: params::voltage::MIN_ERROR_THRESHOLD,
+            max_speed_acceleration: params::speed::MAX_ACCELERATION,
             // FOC脱落検出
-            foc_stall_speed_threshold: params::foc_stall::STALL_SPEED_THRESHOLD,
-            foc_stall_count_threshold: params::foc_stall::STALL_COUNT_THRESHOLD,
+            foc_stall_speed_threshold: params::foc_stall::SPEED_THRESHOLD,
+            foc_stall_count_threshold: params::foc_stall::COUNT_THRESHOLD,
             // オープンループサイクル
             forced_commutation_cycles: params::openloop::FORCED_COMMUTATION_CYCLES,
             min_cycles_before_foc: params::openloop::MIN_CYCLES_BEFORE_FOC,
@@ -327,8 +327,8 @@ mod tests {
         let config = StoredConfig::default();
         assert_eq!(config.magic, CONFIG_MAGIC);
         assert_eq!(config.version, CONFIG_VERSION);
-        assert_eq!(config.speed_kp, params::DEFAULT_SPEED_KP);
-        assert_eq!(config.speed_ki, params::DEFAULT_SPEED_KI);
+        assert_eq!(config.speed_kp, params::speed::DEFAULT_KP);
+        assert_eq!(config.speed_ki, params::speed::DEFAULT_KI);
         // Extended parameters
         assert_eq!(
             config.advance_base_deg,
@@ -338,10 +338,10 @@ mod tests {
             config.advance_max_deg,
             params::advance_angle::MAX_ADVANCE_DEG
         );
-        assert_eq!(config.min_voltage, params::MIN_VOLTAGE);
+        assert_eq!(config.min_voltage, params::voltage::MIN);
         assert_eq!(
             config.foc_stall_speed_threshold,
-            params::foc_stall::STALL_SPEED_THRESHOLD
+            params::foc_stall::SPEED_THRESHOLD
         );
         assert!(!config.dead_time_comp_enabled);
         assert!(!config.flux_weakening_enabled);

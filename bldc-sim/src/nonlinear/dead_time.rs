@@ -122,13 +122,7 @@ impl DeadTimeEffect {
     ///
     /// # Returns
     /// (v_d_distortion, v_q_distortion) [V]
-    pub fn dq_distortion(
-        &self,
-        i_u: f32,
-        i_v: f32,
-        i_w: f32,
-        theta_e: f32,
-    ) -> (f32, f32) {
+    pub fn dq_distortion(&self, i_u: f32, i_v: f32, i_w: f32, theta_e: f32) -> (f32, f32) {
         if !self.enabled {
             return (0.0, 0.0);
         }
@@ -194,10 +188,7 @@ mod tests {
         let pos = dt.phase_distortion(5.0);
         let neg = dt.phase_distortion(-5.0);
 
-        assert!(
-            (pos + neg).abs() < 0.0001,
-            "Distortion should be symmetric"
-        );
+        assert!((pos + neg).abs() < 0.0001, "Distortion should be symmetric");
     }
 
     #[test]

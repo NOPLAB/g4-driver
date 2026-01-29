@@ -34,12 +34,7 @@ impl ThermalState {
 
     /// Update winding temperature
     pub fn update(&mut self, model: &ThermalModel, p_loss: f32, dt: f32) {
-        self.winding_temp = model.step(
-            self.winding_temp,
-            p_loss,
-            self.ambient_temp,
-            dt,
-        );
+        self.winding_temp = model.step(self.winding_temp, p_loss, self.ambient_temp, dt);
     }
 
     /// Get temperature rise above ambient

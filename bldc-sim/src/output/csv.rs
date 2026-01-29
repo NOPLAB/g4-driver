@@ -66,10 +66,7 @@ impl CsvWriter {
 }
 
 /// Write simulation history to CSV file
-pub fn write_to_csv<P: AsRef<Path>>(
-    path: P,
-    history: &[StateSnapshot],
-) -> io::Result<()> {
+pub fn write_to_csv<P: AsRef<Path>>(path: P, history: &[StateSnapshot]) -> io::Result<()> {
     let mut writer = CsvWriter::new(path)?;
     writer.write_history(history)?;
     writer.finish()

@@ -40,22 +40,22 @@ impl MotorParams {
     pub fn default_small_bldc() -> Self {
         Self {
             // Electrical (typical small BLDC ~100W)
-            r_s: 0.5,         // 0.5 Ohm phase resistance
-            l_d: 0.0005,      // 0.5 mH d-axis inductance
-            l_q: 0.0005,      // 0.5 mH q-axis inductance (assuming SPMSM)
-            lambda_m: 0.01,   // 10 mWb flux linkage
+            r_s: 0.5,       // 0.5 Ohm phase resistance
+            l_d: 0.0005,    // 0.5 mH d-axis inductance
+            l_q: 0.0005,    // 0.5 mH q-axis inductance (assuming SPMSM)
+            lambda_m: 0.01, // 10 mWb flux linkage
 
             // Mechanical
-            j: 0.00001,       // 10 g⋅cm² rotor inertia
-            b: 0.00001,       // Small viscous friction
+            j: 0.00001,        // 10 g⋅cm² rotor inertia
+            b: 0.00001,        // Small viscous friction
             t_friction: 0.001, // 1 mN⋅m Coulomb friction
 
             // Construction (matches g4-driver)
             pole_pairs: 6,
 
             // Limits (matches g4-driver 24V system)
-            i_max: 10.0,      // 10A max current
-            v_dc: 24.0,       // 24V DC bus
+            i_max: 10.0,                                       // 10A max current
+            v_dc: 24.0,                                        // 24V DC bus
             omega_max: 4000.0 * core::f32::consts::TAU / 60.0, // 4000 RPM max
         }
     }

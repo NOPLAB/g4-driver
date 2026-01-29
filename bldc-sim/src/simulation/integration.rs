@@ -1,8 +1,6 @@
 //! Numerical integration methods for motor simulation
 
-use crate::motor_model::{
-    LoadTorque, MotorDynamics, MotorState, StateDerivatives, VoltageInput,
-};
+use crate::motor_model::{LoadTorque, MotorDynamics, MotorState, StateDerivatives, VoltageInput};
 
 /// Integration method selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -112,10 +110,10 @@ impl Integrator {
         let k4 = dynamics.calculate_derivatives(&s3, voltage, load);
 
         // Combine: x(t+dt) = x(t) + (k1 + 2*k2 + 2*k3 + k4) * dt / 6
-        state.i_d = s0.i_d
-            + (k1.di_d_dt + 2.0 * k2.di_d_dt + 2.0 * k3.di_d_dt + k4.di_d_dt) * dt / 6.0;
-        state.i_q = s0.i_q
-            + (k1.di_q_dt + 2.0 * k2.di_q_dt + 2.0 * k3.di_q_dt + k4.di_q_dt) * dt / 6.0;
+        state.i_d =
+            s0.i_d + (k1.di_d_dt + 2.0 * k2.di_d_dt + 2.0 * k3.di_d_dt + k4.di_d_dt) * dt / 6.0;
+        state.i_q =
+            s0.i_q + (k1.di_q_dt + 2.0 * k2.di_q_dt + 2.0 * k3.di_q_dt + k4.di_q_dt) * dt / 6.0;
         state.omega_m = s0.omega_m
             + (k1.domega_dt + 2.0 * k2.domega_dt + 2.0 * k3.domega_dt + k4.domega_dt) * dt / 6.0;
 
@@ -186,7 +184,10 @@ mod tests {
         }
 
         // Current should have increased
-        assert!(state.i_d > 0.0, "d-axis current should increase with Vd applied");
+        assert!(
+            state.i_d > 0.0,
+            "d-axis current should increase with Vd applied"
+        );
     }
 
     #[test]
@@ -204,7 +205,10 @@ mod tests {
             integrator.step(&dynamics, &mut state, &voltage, &load, dt);
         }
 
-        assert!(state.i_d > 0.0, "d-axis current should increase with Vd applied");
+        assert!(
+            state.i_d > 0.0,
+            "d-axis current should increase with Vd applied"
+        );
     }
 
     #[test]
@@ -288,9 +292,6 @@ mod tests {
 
         // Should have completed about 1 full rotation (friction will slow it down)
         // At least some rotation should have occurred
-        assert!(
-            state.rotations >= 0,
-            "Should track rotations"
-        );
+        assert!(state.rotations >= 0, "Should track rotations");
     }
 }

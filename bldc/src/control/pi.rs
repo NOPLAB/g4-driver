@@ -86,7 +86,9 @@ impl PiController {
         if should_integrate {
             self.integral += self.ki * error * dt;
             // Clamp integral term to prevent excessive accumulation (windup protection)
-            self.integral = self.integral.clamp(-self.integral_limit, self.integral_limit);
+            self.integral = self
+                .integral
+                .clamp(-self.integral_limit, self.integral_limit);
         }
 
         // Calculate output (integral already includes ki)
