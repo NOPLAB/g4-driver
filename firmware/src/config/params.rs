@@ -30,8 +30,8 @@ pub mod motor {
 
 /// 制御周期パラメータ
 pub mod control {
-    /// 制御周期 [μs]（10kHz = 100μs）
-    pub const DEFAULT_PERIOD_US: u64 = 100;
+    /// 制御周期 [μs]（20kHz = 50μs）
+    pub const DEFAULT_PERIOD_US: u64 = 50;
 }
 
 // =============================================================================
@@ -118,9 +118,9 @@ pub mod foc_stall {
     pub const SPEED_THRESHOLD: f32 = 50.0;
 
     /// 脱落判定の連続回数閾値
-    /// 10kHz制御で500回 = 50ms以上連続して低速ならOpenLoopに戻る
+    /// 20kHz制御で1000回 = 50ms以上連続して低速ならOpenLoopに戻る
     /// 早期検出により脱調からの回復を迅速化
-    pub const COUNT_THRESHOLD: u32 = 500;
+    pub const COUNT_THRESHOLD: u32 = 1000;
 }
 
 // =============================================================================
@@ -141,11 +141,11 @@ pub mod openloop {
     /// デューティ比 (0-100)（Hall ベース駆動用：15%）
     pub const DEFAULT_DUTY_RATIO: u16 = 15;
 
-    /// 強制転流フェーズの実行回数（10000 = 1秒 @ 10kHz）
-    pub const FORCED_COMMUTATION_CYCLES: u32 = 10000;
+    /// 強制転流フェーズの実行回数（20000 = 1秒 @ 20kHz）
+    pub const FORCED_COMMUTATION_CYCLES: u32 = 20000;
 
-    /// FOC切り替えまでの最小実行回数（10000 = 1秒 @ 10kHz）
-    pub const MIN_CYCLES_BEFORE_FOC: u32 = 10000;
+    /// FOC切り替えまでの最小実行回数（20000 = 1秒 @ 20kHz）
+    pub const MIN_CYCLES_BEFORE_FOC: u32 = 20000;
 
     /// FOC切り替えに必要な最小速度 [RPM]
     pub const MIN_SPEED_FOR_FOC: f32 = 100.0;
