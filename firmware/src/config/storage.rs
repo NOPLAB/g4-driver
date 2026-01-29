@@ -8,7 +8,7 @@ use super::params;
 pub const CONFIG_MAGIC: u32 = 0x31474643;
 
 /// 現在の設定バージョン
-pub const CONFIG_VERSION: u16 = 1;
+pub const CONFIG_VERSION: u16 = 2;
 
 /// 永続化される設定構造体
 ///
@@ -104,6 +104,66 @@ pub struct StoredConfig {
     /// 制御周期 [μs]
     pub control_period_us: u64,
 
+    // === 進角パラメータ ===
+    /// 基本進角 [度]
+    pub advance_base_deg: f32,
+    /// 最大進角 [度]
+    pub advance_max_deg: f32,
+    /// 進角適用最大速度 [RPM]
+    pub advance_max_speed: f32,
+    /// 進角適用最小速度 [RPM]
+    pub advance_min_speed: f32,
+
+    // === 最小電圧関連 ===
+    /// 最小出力電圧 [V]
+    pub min_voltage: f32,
+    /// 最小電圧適用の速度誤差しきい値 [RPM]
+    pub min_voltage_error_threshold: f32,
+    /// 速度指令の最大加速度 [RPM/s]
+    pub max_speed_acceleration: f32,
+
+    // === FOC脱落検出 ===
+    /// FOC脱落判定の速度閾値 [RPM]
+    pub foc_stall_speed_threshold: f32,
+    /// FOC脱落判定の連続回数閾値
+    pub foc_stall_count_threshold: u32,
+
+    // === オープンループサイクル ===
+    /// 強制転流フェーズの実行回数
+    pub forced_commutation_cycles: u32,
+    /// FOC切り替えまでの最小実行回数
+    pub min_cycles_before_foc: u32,
+
+    // === デッドタイム補償 ===
+    /// 補償有効/無効フラグ
+    pub dead_time_comp_enabled: bool,
+    /// パディング
+    _padding_dtc: [u8; 3],
+    /// 補償対象のデッドタイム [ns]
+    pub dead_time_ns: f32,
+
+    // === フラックス弱め制御 ===
+    /// 制御有効/無効フラグ
+    pub flux_weakening_enabled: bool,
+    /// パディング
+    _padding_fw: [u8; 3],
+    /// 弱め制御開始速度 [RPM]
+    pub flux_weakening_min_speed: f32,
+    /// 最大弱め速度 [RPM]
+    pub flux_weakening_max_speed: f32,
+    /// 最大弱め率 (0.0-1.0)
+    pub flux_weakening_max_ratio: f32,
+    /// Vdレート制限 [V/s]
+    pub flux_weakening_vd_rate_limit: f32,
+
+    // === 電圧監視 ===
+    /// 過電圧しきい値 [V]
+    pub voltage_overvoltage_threshold: f32,
+    /// 低電圧しきい値 [V]
+    pub voltage_undervoltage_threshold: f32,
+    /// ローパスフィルタ係数
+    pub voltage_filter_alpha: f32,
+
     /// CRC32チェックサム（最後に配置）
     pub crc32: u32,
 }
@@ -139,6 +199,36 @@ impl StoredConfig {
             _padding4: 0,
             can_bitrate: params::can::DEFAULT_BITRATE,
             control_period_us: params::DEFAULT_CONTROL_PERIOD_US,
+            // 進角パラメータ
+            advance_base_deg: params::advance_angle::BASE_ADVANCE_DEG,
+            advance_max_deg: params::advance_angle::MAX_ADVANCE_DEG,
+            advance_max_speed: params::advance_angle::MAX_SPEED_FOR_ADVANCE,
+            advance_min_speed: params::advance_angle::MIN_SPEED_FOR_ADVANCE,
+            // 最小電圧関連
+            min_voltage: params::MIN_VOLTAGE,
+            min_voltage_error_threshold: params::MIN_VOLTAGE_ERROR_THRESHOLD,
+            max_speed_acceleration: params::MAX_SPEED_ACCELERATION,
+            // FOC脱落検出
+            foc_stall_speed_threshold: params::foc_stall::STALL_SPEED_THRESHOLD,
+            foc_stall_count_threshold: params::foc_stall::STALL_COUNT_THRESHOLD,
+            // オープンループサイクル
+            forced_commutation_cycles: params::openloop::FORCED_COMMUTATION_CYCLES,
+            min_cycles_before_foc: params::openloop::MIN_CYCLES_BEFORE_FOC,
+            // デッドタイム補償
+            dead_time_comp_enabled: params::dead_time_compensation::ENABLED,
+            _padding_dtc: [0; 3],
+            dead_time_ns: params::dead_time_compensation::DEAD_TIME_NS,
+            // フラックス弱め制御
+            flux_weakening_enabled: params::flux_weakening::ENABLED,
+            _padding_fw: [0; 3],
+            flux_weakening_min_speed: params::flux_weakening::MIN_SPEED,
+            flux_weakening_max_speed: params::flux_weakening::MAX_SPEED,
+            flux_weakening_max_ratio: params::flux_weakening::MAX_WEAKENING_RATIO,
+            flux_weakening_vd_rate_limit: params::flux_weakening::VD_RATE_LIMIT,
+            // 電圧監視
+            voltage_overvoltage_threshold: 30.0,
+            voltage_undervoltage_threshold: 10.0,
+            voltage_filter_alpha: 0.1,
             crc32: 0, // CRC計算前は0
         }
     }
@@ -237,8 +327,24 @@ mod tests {
         let config = StoredConfig::default();
         assert_eq!(config.magic, CONFIG_MAGIC);
         assert_eq!(config.version, CONFIG_VERSION);
-        assert_eq!(config.speed_kp, 0.5);
-        assert_eq!(config.speed_ki, 0.05);
+        assert_eq!(config.speed_kp, params::DEFAULT_SPEED_KP);
+        assert_eq!(config.speed_ki, params::DEFAULT_SPEED_KI);
+        // Extended parameters
+        assert_eq!(
+            config.advance_base_deg,
+            params::advance_angle::BASE_ADVANCE_DEG
+        );
+        assert_eq!(
+            config.advance_max_deg,
+            params::advance_angle::MAX_ADVANCE_DEG
+        );
+        assert_eq!(config.min_voltage, params::MIN_VOLTAGE);
+        assert_eq!(
+            config.foc_stall_speed_threshold,
+            params::foc_stall::STALL_SPEED_THRESHOLD
+        );
+        assert!(!config.dead_time_comp_enabled);
+        assert!(!config.flux_weakening_enabled);
     }
 
     #[test]

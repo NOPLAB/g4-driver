@@ -27,6 +27,29 @@ const DEFAULT_PWM_DEAD_TIME: u16 = 100;
 const DEFAULT_CAN_BITRATE: u32 = 250000;
 const DEFAULT_CONTROL_PERIOD_US: u64 = 400;
 
+// Extended defaults
+const DEFAULT_ADVANCE_BASE_DEG: f32 = 10.0;
+const DEFAULT_ADVANCE_MAX_DEG: f32 = 30.0;
+const DEFAULT_ADVANCE_MIN_SPEED: f32 = 100.0;
+const DEFAULT_ADVANCE_MAX_SPEED: f32 = 3000.0;
+const DEFAULT_MIN_VOLTAGE: f32 = 2.0;
+const DEFAULT_MIN_VOLTAGE_ERROR_THRESHOLD: f32 = 2.0;
+const DEFAULT_MAX_SPEED_ACCELERATION: f32 = 100.0;
+const DEFAULT_FOC_STALL_SPEED_THRESHOLD: f32 = 50.0;
+const DEFAULT_FOC_STALL_COUNT_THRESHOLD: u32 = 1000;
+const DEFAULT_FORCED_COMMUTATION_CYCLES: u32 = 10000;
+const DEFAULT_MIN_CYCLES_BEFORE_FOC: u32 = 10000;
+const DEFAULT_DEAD_TIME_COMP_ENABLED: bool = false;
+const DEFAULT_DEAD_TIME_NS: f32 = 100.0;
+const DEFAULT_FLUX_WEAKENING_ENABLED: bool = false;
+const DEFAULT_FLUX_WEAKENING_MIN_SPEED: f32 = 2000.0;
+const DEFAULT_FLUX_WEAKENING_MAX_SPEED: f32 = 4000.0;
+const DEFAULT_FLUX_WEAKENING_MAX_RATIO: f32 = 0.5;
+const DEFAULT_FLUX_WEAKENING_VD_RATE_LIMIT: f32 = 100.0;
+const DEFAULT_VOLTAGE_OVERVOLTAGE_THRESHOLD: f32 = 30.0;
+const DEFAULT_VOLTAGE_UNDERVOLTAGE_THRESHOLD: f32 = 10.0;
+const DEFAULT_VOLTAGE_FILTER_ALPHA: f32 = 0.1;
+
 #[component]
 pub fn SettingsPanel() -> Element {
     let app_state = use_context::<Signal<AppState>>();
@@ -99,7 +122,7 @@ pub fn SettingsPanel() -> Element {
                         "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
                     },
                     onclick: move |_| selected_tab.set(4),
-                    "Advanced"
+                    "FOC Advanced"
                 }
 
                 button {
@@ -109,6 +132,36 @@ pub fn SettingsPanel() -> Element {
                         "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
                     },
                     onclick: move |_| selected_tab.set(5),
+                    "Compensation"
+                }
+
+                button {
+                    style: if selected_tab() == 6 {
+                        "padding: 12px 24px; border: none; background: #007bff; color: white; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500; border-bottom: 3px solid #007bff;"
+                    } else {
+                        "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
+                    },
+                    onclick: move |_| selected_tab.set(6),
+                    "Voltage"
+                }
+
+                button {
+                    style: if selected_tab() == 7 {
+                        "padding: 12px 24px; border: none; background: #007bff; color: white; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500; border-bottom: 3px solid #007bff;"
+                    } else {
+                        "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
+                    },
+                    onclick: move |_| selected_tab.set(7),
+                    "Advanced"
+                }
+
+                button {
+                    style: if selected_tab() == 8 {
+                        "padding: 12px 24px; border: none; background: #007bff; color: white; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500; border-bottom: 3px solid #007bff;"
+                    } else {
+                        "padding: 12px 24px; border: none; background: #f8f9fa; color: #333; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 500;"
+                    },
+                    onclick: move |_| selected_tab.set(8),
                     "Calibration"
                 }
             }
@@ -119,8 +172,11 @@ pub fn SettingsPanel() -> Element {
                 1 => rsx! { MotorControlTab { is_connected } },
                 2 => rsx! { HallSensorTab { is_connected } },
                 3 => rsx! { OpenLoopTab { is_connected } },
-                4 => rsx! { AdvancedTab { is_connected } },
-                5 => rsx! { CalibrationTab { is_connected } },
+                4 => rsx! { FocAdvancedTab { is_connected } },
+                5 => rsx! { CompensationTab { is_connected } },
+                6 => rsx! { VoltageMonitorTab { is_connected } },
+                7 => rsx! { AdvancedTab { is_connected } },
+                8 => rsx! { CalibrationTab { is_connected } },
                 _ => rsx! { div { "Invalid tab" } },
             }
 
@@ -450,6 +506,439 @@ fn OpenLoopTab(is_connected: bool) -> Element {
                     },
                     is_connected,
                     description: format!("PWM duty ratio during openloop. Default: {}", DEFAULT_OPENLOOP_DUTY_RATIO)
+                }
+
+                // Forced Commutation Cycles
+                U32Input {
+                    label: "Forced Commutation Cycles".to_string(),
+                    value: app_state.read().settings.forced_commutation_cycles,
+                    on_change: move |v| {
+                        app_state.write().settings.forced_commutation_cycles = v;
+                        let val = v;
+                        spawn(async move {
+                            let mgr = app_state.read().can_manager.clone();
+                            let min = app_state.read().settings.min_cycles_before_foc;
+                            let _ = mgr.lock().await.send_openloop_cycles_params(val, min).await;
+                        });
+                    },
+                    is_connected,
+                    description: format!("Number of forced commutation cycles at startup. Default: {}", DEFAULT_FORCED_COMMUTATION_CYCLES)
+                }
+
+                // Min Cycles Before FOC
+                U32Input {
+                    label: "Min Cycles Before FOC".to_string(),
+                    value: app_state.read().settings.min_cycles_before_foc,
+                    on_change: move |v| {
+                        app_state.write().settings.min_cycles_before_foc = v;
+                        let val = v;
+                        spawn(async move {
+                            let mgr = app_state.read().can_manager.clone();
+                            let forced = app_state.read().settings.forced_commutation_cycles;
+                            let _ = mgr.lock().await.send_openloop_cycles_params(forced, val).await;
+                        });
+                    },
+                    is_connected,
+                    description: format!("Minimum cycles before switching to FOC. Default: {}", DEFAULT_MIN_CYCLES_BEFORE_FOC)
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn FocAdvancedTab(is_connected: bool) -> Element {
+    let mut app_state = use_context::<Signal<AppState>>();
+
+    rsx! {
+        Card {
+            SectionHeader { title: "FOC Advanced Parameters".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure advance angle, minimum voltage, and stall detection." }
+
+            // Advance Angle Section
+            div { style: "margin-bottom: 30px;",
+                h4 { style: "color: #444; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;", "Advance Angle" }
+                div { style: "display: grid; gap: 15px;",
+                    F32Input {
+                        label: "Base Advance (deg)".to_string(),
+                        value: app_state.read().settings.advance_base_deg,
+                        step: "1.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.advance_base_deg = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let max = app_state.read().settings.advance_max_deg;
+                                let _ = mgr.lock().await.send_advance_angle_params(val, max).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Base advance angle at low speed. Default: {}°", DEFAULT_ADVANCE_BASE_DEG)
+                    }
+
+                    F32Input {
+                        label: "Max Advance (deg)".to_string(),
+                        value: app_state.read().settings.advance_max_deg,
+                        step: "1.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.advance_max_deg = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let base = app_state.read().settings.advance_base_deg;
+                                let _ = mgr.lock().await.send_advance_angle_params(base, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Maximum advance angle at high speed. Default: {}°", DEFAULT_ADVANCE_MAX_DEG)
+                    }
+
+                    F32Input {
+                        label: "Min Speed for Advance (RPM)".to_string(),
+                        value: app_state.read().settings.advance_min_speed,
+                        step: "10.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.advance_min_speed = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let max = app_state.read().settings.advance_max_speed;
+                                let _ = mgr.lock().await.send_advance_angle_speed(val, max).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed below which base advance is used. Default: {} RPM", DEFAULT_ADVANCE_MIN_SPEED)
+                    }
+
+                    F32Input {
+                        label: "Max Speed for Advance (RPM)".to_string(),
+                        value: app_state.read().settings.advance_max_speed,
+                        step: "100.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.advance_max_speed = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let min = app_state.read().settings.advance_min_speed;
+                                let _ = mgr.lock().await.send_advance_angle_speed(min, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed above which max advance is used. Default: {} RPM", DEFAULT_ADVANCE_MAX_SPEED)
+                    }
+                }
+            }
+
+            // Minimum Voltage Section
+            div { style: "margin-bottom: 30px;",
+                h4 { style: "color: #444; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;", "Minimum Voltage" }
+                div { style: "display: grid; gap: 15px;",
+                    F32Input {
+                        label: "Min Voltage (V)".to_string(),
+                        value: app_state.read().settings.min_voltage,
+                        step: "0.1".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.min_voltage = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let threshold = app_state.read().settings.min_voltage_error_threshold;
+                                let _ = mgr.lock().await.send_min_voltage_params(val, threshold).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Minimum output voltage. Default: {}V", DEFAULT_MIN_VOLTAGE)
+                    }
+
+                    F32Input {
+                        label: "Error Threshold (RPM)".to_string(),
+                        value: app_state.read().settings.min_voltage_error_threshold,
+                        step: "0.1".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.min_voltage_error_threshold = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let min_v = app_state.read().settings.min_voltage;
+                                let _ = mgr.lock().await.send_min_voltage_params(min_v, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed error threshold for min voltage. Default: {}", DEFAULT_MIN_VOLTAGE_ERROR_THRESHOLD)
+                    }
+
+                    F32Input {
+                        label: "Max Speed Acceleration (RPM/s)".to_string(),
+                        value: app_state.read().settings.max_speed_acceleration,
+                        step: "10.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.max_speed_acceleration = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let _ = mgr.lock().await.send_max_speed_accel(val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Max speed command acceleration. Default: {} RPM/s", DEFAULT_MAX_SPEED_ACCELERATION)
+                    }
+                }
+            }
+
+            // FOC Stall Detection Section
+            div {
+                h4 { style: "color: #444; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;", "FOC Stall Detection" }
+                div { style: "display: grid; gap: 15px;",
+                    F32Input {
+                        label: "Stall Speed Threshold (RPM)".to_string(),
+                        value: app_state.read().settings.foc_stall_speed_threshold,
+                        step: "5.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.foc_stall_speed_threshold = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let count = app_state.read().settings.foc_stall_count_threshold;
+                                let _ = mgr.lock().await.send_foc_stall_params(val, count).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed threshold for stall detection. Default: {} RPM", DEFAULT_FOC_STALL_SPEED_THRESHOLD)
+                    }
+
+                    U32Input {
+                        label: "Stall Count Threshold".to_string(),
+                        value: app_state.read().settings.foc_stall_count_threshold,
+                        on_change: move |v| {
+                            app_state.write().settings.foc_stall_count_threshold = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let speed = app_state.read().settings.foc_stall_speed_threshold;
+                                let _ = mgr.lock().await.send_foc_stall_params(speed, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Consecutive low-speed cycles for stall. Default: {}", DEFAULT_FOC_STALL_COUNT_THRESHOLD)
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CompensationTab(is_connected: bool) -> Element {
+    let mut app_state = use_context::<Signal<AppState>>();
+
+    rsx! {
+        Card {
+            SectionHeader { title: "Compensation Settings".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure dead time compensation and flux weakening control." }
+
+            // Dead Time Compensation Section
+            div { style: "margin-bottom: 30px;",
+                h4 { style: "color: #444; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;", "Dead Time Compensation" }
+                div { style: "display: grid; gap: 15px;",
+                    div {
+                        label { style: "font-size: 14px; font-weight: 500; color: #555; display: flex; align-items: center; gap: 10px;",
+                            input {
+                                r#type: "checkbox",
+                                checked: app_state.read().settings.dead_time_comp_enabled,
+                                disabled: !is_connected,
+                                onchange: move |evt| {
+                                    let enabled = evt.value().parse::<bool>().unwrap_or(false);
+                                    app_state.write().settings.dead_time_comp_enabled = enabled;
+                                    spawn(async move {
+                                        let mgr = app_state.read().can_manager.clone();
+                                        let dt = app_state.read().settings.dead_time_ns;
+                                        let _ = mgr.lock().await.send_dead_time_comp_params(enabled, dt).await;
+                                    });
+                                },
+                            }
+                            "Enable Dead Time Compensation"
+                        }
+                        p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;",
+                            "Compensate for PWM dead time effects. Default: {DEFAULT_DEAD_TIME_COMP_ENABLED}"
+                        }
+                    }
+
+                    F32Input {
+                        label: "Dead Time (ns)".to_string(),
+                        value: app_state.read().settings.dead_time_ns,
+                        step: "10.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.dead_time_ns = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let enabled = app_state.read().settings.dead_time_comp_enabled;
+                                let _ = mgr.lock().await.send_dead_time_comp_params(enabled, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Dead time to compensate in nanoseconds. Default: {} ns", DEFAULT_DEAD_TIME_NS)
+                    }
+                }
+            }
+
+            // Flux Weakening Section
+            div {
+                h4 { style: "color: #444; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;", "Flux Weakening Control" }
+                div { style: "display: grid; gap: 15px;",
+                    div {
+                        label { style: "font-size: 14px; font-weight: 500; color: #555; display: flex; align-items: center; gap: 10px;",
+                            input {
+                                r#type: "checkbox",
+                                checked: app_state.read().settings.flux_weakening_enabled,
+                                disabled: !is_connected,
+                                onchange: move |evt| {
+                                    let enabled = evt.value().parse::<bool>().unwrap_or(false);
+                                    app_state.write().settings.flux_weakening_enabled = enabled;
+                                    spawn(async move {
+                                        let mgr = app_state.read().can_manager.clone();
+                                        let min_speed = app_state.read().settings.flux_weakening_min_speed;
+                                        let _ = mgr.lock().await.send_flux_weakening_enable(enabled, min_speed).await;
+                                    });
+                                },
+                            }
+                            "Enable Flux Weakening"
+                        }
+                        p { style: "margin: 4px 0 0 0; font-size: 12px; color: #666;",
+                            "Enable field weakening for higher speeds. Default: {DEFAULT_FLUX_WEAKENING_ENABLED}"
+                        }
+                    }
+
+                    F32Input {
+                        label: "Min Speed (RPM)".to_string(),
+                        value: app_state.read().settings.flux_weakening_min_speed,
+                        step: "100.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.flux_weakening_min_speed = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let enabled = app_state.read().settings.flux_weakening_enabled;
+                                let _ = mgr.lock().await.send_flux_weakening_enable(enabled, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed at which flux weakening starts. Default: {} RPM", DEFAULT_FLUX_WEAKENING_MIN_SPEED)
+                    }
+
+                    F32Input {
+                        label: "Max Speed (RPM)".to_string(),
+                        value: app_state.read().settings.flux_weakening_max_speed,
+                        step: "100.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.flux_weakening_max_speed = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let ratio = app_state.read().settings.flux_weakening_max_ratio;
+                                let _ = mgr.lock().await.send_flux_weakening_params(val, ratio).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Speed at which max weakening is reached. Default: {} RPM", DEFAULT_FLUX_WEAKENING_MAX_SPEED)
+                    }
+
+                    F32Input {
+                        label: "Max Weakening Ratio".to_string(),
+                        value: app_state.read().settings.flux_weakening_max_ratio,
+                        step: "0.05".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.flux_weakening_max_ratio = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let max_speed = app_state.read().settings.flux_weakening_max_speed;
+                                let _ = mgr.lock().await.send_flux_weakening_params(max_speed, val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Maximum flux weakening ratio (0-1). Default: {}", DEFAULT_FLUX_WEAKENING_MAX_RATIO)
+                    }
+
+                    F32Input {
+                        label: "Vd Rate Limit (V/s)".to_string(),
+                        value: app_state.read().settings.flux_weakening_vd_rate_limit,
+                        step: "10.0".to_string(),
+                        on_change: move |v| {
+                            app_state.write().settings.flux_weakening_vd_rate_limit = v;
+                            let val = v;
+                            spawn(async move {
+                                let mgr = app_state.read().can_manager.clone();
+                                let _ = mgr.lock().await.send_flux_weakening_vd(val).await;
+                            });
+                        },
+                        is_connected,
+                        description: format!("Rate limit for Vd changes. Default: {} V/s", DEFAULT_FLUX_WEAKENING_VD_RATE_LIMIT)
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn VoltageMonitorTab(is_connected: bool) -> Element {
+    let mut app_state = use_context::<Signal<AppState>>();
+
+    rsx! {
+        Card {
+            SectionHeader { title: "Voltage Monitor Settings".to_string() }
+            p { style: "color: #666; margin: 10px 0 20px 0;", "Configure voltage monitoring thresholds and filter settings." }
+
+            div { style: "display: grid; gap: 15px;",
+                F32Input {
+                    label: "Overvoltage Threshold (V)".to_string(),
+                    value: app_state.read().settings.voltage_overvoltage_threshold,
+                    step: "1.0".to_string(),
+                    on_change: move |v| {
+                        app_state.write().settings.voltage_overvoltage_threshold = v;
+                        let val = v;
+                        spawn(async move {
+                            let mgr = app_state.read().can_manager.clone();
+                            let under = app_state.read().settings.voltage_undervoltage_threshold;
+                            let _ = mgr.lock().await.send_voltage_monitor_thresholds(val, under).await;
+                        });
+                    },
+                    is_connected,
+                    description: format!("Voltage above which overvoltage is triggered. Default: {}V", DEFAULT_VOLTAGE_OVERVOLTAGE_THRESHOLD)
+                }
+
+                F32Input {
+                    label: "Undervoltage Threshold (V)".to_string(),
+                    value: app_state.read().settings.voltage_undervoltage_threshold,
+                    step: "1.0".to_string(),
+                    on_change: move |v| {
+                        app_state.write().settings.voltage_undervoltage_threshold = v;
+                        let val = v;
+                        spawn(async move {
+                            let mgr = app_state.read().can_manager.clone();
+                            let over = app_state.read().settings.voltage_overvoltage_threshold;
+                            let _ = mgr.lock().await.send_voltage_monitor_thresholds(over, val).await;
+                        });
+                    },
+                    is_connected,
+                    description: format!("Voltage below which undervoltage is triggered. Default: {}V", DEFAULT_VOLTAGE_UNDERVOLTAGE_THRESHOLD)
+                }
+
+                F32Input {
+                    label: "Filter Alpha".to_string(),
+                    value: app_state.read().settings.voltage_filter_alpha,
+                    step: "0.01".to_string(),
+                    on_change: move |v| {
+                        app_state.write().settings.voltage_filter_alpha = v;
+                        let val = v;
+                        spawn(async move {
+                            let mgr = app_state.read().can_manager.clone();
+                            let _ = mgr.lock().await.send_voltage_monitor_filter(val).await;
+                        });
+                    },
+                    is_connected,
+                    description: format!("Low-pass filter coefficient (0-1). Higher = faster response. Default: {}", DEFAULT_VOLTAGE_FILTER_ALPHA)
                 }
             }
         }

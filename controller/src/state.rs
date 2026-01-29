@@ -66,6 +66,62 @@ pub struct UserSettings {
     // === Control Timing ===
     /// Control period [μs]
     pub control_period_us: u64,
+
+    // === Advance Angle Parameters ===
+    /// Base advance angle [degrees]
+    pub advance_base_deg: f32,
+    /// Maximum advance angle [degrees]
+    pub advance_max_deg: f32,
+    /// Minimum speed for advance [RPM]
+    pub advance_min_speed: f32,
+    /// Maximum speed for advance [RPM]
+    pub advance_max_speed: f32,
+
+    // === Min Voltage Parameters ===
+    /// Minimum output voltage [V]
+    pub min_voltage: f32,
+    /// Min voltage error threshold [RPM]
+    pub min_voltage_error_threshold: f32,
+    /// Max speed acceleration [RPM/s]
+    pub max_speed_acceleration: f32,
+
+    // === FOC Stall Detection ===
+    /// FOC stall speed threshold [RPM]
+    pub foc_stall_speed_threshold: f32,
+    /// FOC stall count threshold
+    pub foc_stall_count_threshold: u32,
+
+    // === OpenLoop Cycles ===
+    /// Forced commutation cycles
+    pub forced_commutation_cycles: u32,
+    /// Min cycles before FOC transition
+    pub min_cycles_before_foc: u32,
+
+    // === Dead Time Compensation ===
+    /// Dead time compensation enabled
+    pub dead_time_comp_enabled: bool,
+    /// Dead time [ns]
+    pub dead_time_ns: f32,
+
+    // === Flux Weakening ===
+    /// Flux weakening enabled
+    pub flux_weakening_enabled: bool,
+    /// Flux weakening min speed [RPM]
+    pub flux_weakening_min_speed: f32,
+    /// Flux weakening max speed [RPM]
+    pub flux_weakening_max_speed: f32,
+    /// Flux weakening max ratio (0-1)
+    pub flux_weakening_max_ratio: f32,
+    /// Flux weakening Vd rate limit [V/s]
+    pub flux_weakening_vd_rate_limit: f32,
+
+    // === Voltage Monitor ===
+    /// Overvoltage threshold [V]
+    pub voltage_overvoltage_threshold: f32,
+    /// Undervoltage threshold [V]
+    pub voltage_undervoltage_threshold: f32,
+    /// Voltage filter alpha
+    pub voltage_filter_alpha: f32,
 }
 
 impl Default for UserSettings {
@@ -100,6 +156,41 @@ impl Default for UserSettings {
 
             // Control timing defaults
             control_period_us: 400,
+
+            // Advance angle defaults
+            advance_base_deg: 10.0,
+            advance_max_deg: 30.0,
+            advance_min_speed: 100.0,
+            advance_max_speed: 3000.0,
+
+            // Min voltage defaults
+            min_voltage: 2.0,
+            min_voltage_error_threshold: 2.0,
+            max_speed_acceleration: 100.0,
+
+            // FOC stall defaults
+            foc_stall_speed_threshold: 50.0,
+            foc_stall_count_threshold: 1000,
+
+            // OpenLoop cycles defaults
+            forced_commutation_cycles: 10000,
+            min_cycles_before_foc: 10000,
+
+            // Dead time compensation defaults
+            dead_time_comp_enabled: false,
+            dead_time_ns: 100.0,
+
+            // Flux weakening defaults
+            flux_weakening_enabled: false,
+            flux_weakening_min_speed: 2000.0,
+            flux_weakening_max_speed: 4000.0,
+            flux_weakening_max_ratio: 0.5,
+            flux_weakening_vd_rate_limit: 100.0,
+
+            // Voltage monitor defaults
+            voltage_overvoltage_threshold: 30.0,
+            voltage_undervoltage_threshold: 10.0,
+            voltage_filter_alpha: 0.1,
         }
     }
 }

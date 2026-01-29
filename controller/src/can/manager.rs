@@ -235,6 +235,101 @@ impl CanManager {
         self.send_frame(can_ids::START_CALIBRATION, &data).await
     }
 
+    // ========================================================================
+    // Extended Parameter Commands
+    // ========================================================================
+
+    /// Send advance angle parameters
+    pub async fn send_advance_angle_params(&self, base_deg: f32, max_deg: f32) -> Result<()> {
+        let data = protocol::encode_advance_angle_params(base_deg, max_deg);
+        self.send_frame(can_ids::ADVANCE_ANGLE_PARAMS, &data).await
+    }
+
+    /// Send advance angle speed range
+    pub async fn send_advance_angle_speed(&self, min_speed: f32, max_speed: f32) -> Result<()> {
+        let data = protocol::encode_advance_angle_speed(min_speed, max_speed);
+        self.send_frame(can_ids::ADVANCE_ANGLE_SPEED, &data).await
+    }
+
+    /// Send min voltage parameters
+    pub async fn send_min_voltage_params(
+        &self,
+        min_voltage: f32,
+        error_threshold: f32,
+    ) -> Result<()> {
+        let data = protocol::encode_min_voltage_params(min_voltage, error_threshold);
+        self.send_frame(can_ids::MIN_VOLTAGE_PARAMS, &data).await
+    }
+
+    /// Send max speed acceleration
+    pub async fn send_max_speed_accel(&self, max_accel: f32) -> Result<()> {
+        let data = protocol::encode_max_speed_accel(max_accel);
+        self.send_frame(can_ids::MAX_SPEED_ACCEL, &data).await
+    }
+
+    /// Send FOC stall detection parameters
+    pub async fn send_foc_stall_params(
+        &self,
+        speed_threshold: f32,
+        count_threshold: u32,
+    ) -> Result<()> {
+        let data = protocol::encode_foc_stall_params(speed_threshold, count_threshold);
+        self.send_frame(can_ids::FOC_STALL_PARAMS, &data).await
+    }
+
+    /// Send openloop cycles parameters
+    pub async fn send_openloop_cycles_params(
+        &self,
+        forced_cycles: u32,
+        min_cycles: u32,
+    ) -> Result<()> {
+        let data = protocol::encode_openloop_cycles_params(forced_cycles, min_cycles);
+        self.send_frame(can_ids::OPENLOOP_CYCLES_PARAMS, &data)
+            .await
+    }
+
+    /// Send dead time compensation parameters
+    pub async fn send_dead_time_comp_params(&self, enabled: bool, dead_time_ns: f32) -> Result<()> {
+        let data = protocol::encode_dead_time_comp_params(enabled, dead_time_ns);
+        self.send_frame(can_ids::DEAD_TIME_COMP_PARAMS, &data).await
+    }
+
+    /// Send flux weakening enable and min speed
+    pub async fn send_flux_weakening_enable(&self, enabled: bool, min_speed: f32) -> Result<()> {
+        let data = protocol::encode_flux_weakening_enable(enabled, min_speed);
+        self.send_frame(can_ids::FLUX_WEAKENING_ENABLE, &data).await
+    }
+
+    /// Send flux weakening parameters
+    pub async fn send_flux_weakening_params(&self, max_speed: f32, max_ratio: f32) -> Result<()> {
+        let data = protocol::encode_flux_weakening_params(max_speed, max_ratio);
+        self.send_frame(can_ids::FLUX_WEAKENING_PARAMS, &data).await
+    }
+
+    /// Send flux weakening Vd rate limit
+    pub async fn send_flux_weakening_vd(&self, vd_rate_limit: f32) -> Result<()> {
+        let data = protocol::encode_flux_weakening_vd(vd_rate_limit);
+        self.send_frame(can_ids::FLUX_WEAKENING_VD, &data).await
+    }
+
+    /// Send voltage monitor thresholds
+    pub async fn send_voltage_monitor_thresholds(
+        &self,
+        overvoltage: f32,
+        undervoltage: f32,
+    ) -> Result<()> {
+        let data = protocol::encode_voltage_monitor_thresholds(overvoltage, undervoltage);
+        self.send_frame(can_ids::VOLTAGE_MONITOR_THRESHOLDS, &data)
+            .await
+    }
+
+    /// Send voltage monitor filter alpha
+    pub async fn send_voltage_monitor_filter(&self, alpha: f32) -> Result<()> {
+        let data = protocol::encode_voltage_monitor_filter(alpha);
+        self.send_frame(can_ids::VOLTAGE_MONITOR_FILTER, &data)
+            .await
+    }
+
     /// Receive next CAN frame with timeout
     ///
     /// # Arguments
