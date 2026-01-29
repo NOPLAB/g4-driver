@@ -6,7 +6,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::{calculate_svpwm, inverse_park, limit_voltage, HallSensor, PiController};
+use crate::foc::{
+    calculate_svpwm, inverse_park, limit_voltage, DeadTimeCompensation, FluxWeakeningController,
+    HallSensor, PiController,
+};
 use crate::hall_tim;
 use crate::motor_driver::MotorDriver;
 use crate::state;
@@ -26,6 +29,30 @@ static STALL_COUNTER: AtomicU32 = AtomicU32::new(0);
 /// PIリセットまでの無効Hall状態の連続回数閾値
 /// 10kHz制御で20回 = 2ms以上連続して無効な場合のみリセット
 const INVALID_HALL_THRESHOLD: u32 = 20;
+
+/// デッドタイム補償器を初期化
+pub fn create_dead_time_compensation(max_duty: u16) -> DeadTimeCompensation {
+    let mut comp = DeadTimeCompensation::new(
+        dead_time_compensation::DEAD_TIME_NS,
+        pwm::DEFAULT_FREQUENCY.0,
+        DEFAULT_V_DC_BUS,
+        max_duty,
+    );
+    comp.set_enabled(dead_time_compensation::ENABLED);
+    comp
+}
+
+/// フラックス弱め制御器を初期化
+pub fn create_flux_weakening_controller() -> FluxWeakeningController {
+    let mut fw = FluxWeakeningController::new(
+        flux_weakening::MIN_SPEED,
+        flux_weakening::MAX_SPEED,
+        flux_weakening::MAX_WEAKENING_RATIO,
+        flux_weakening::VD_RATE_LIMIT,
+    );
+    fw.set_enabled(flux_weakening::ENABLED);
+    fw
+}
 
 /// FOC制御の実行結果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +77,8 @@ pub fn reset_stall_counter() {
 /// * `hall_sensor` - Hallセンサー
 /// * `speed_pi` - 速度PIコントローラー
 /// * `motor_driver` - モータードライバー
+/// * `dead_time_comp` - デッドタイム補償器
+/// * `flux_weakening` - フラックス弱め制御器
 /// * `ramped_target_speed` - ランプ処理後の目標速度
 /// * `dt` - 制御周期 [s]
 ///
@@ -59,6 +88,8 @@ pub async fn execute(
     hall_sensor: &mut HallSensor,
     speed_pi: &mut PiController,
     motor_driver: &mut MotorDriver,
+    dead_time_comp: &DeadTimeCompensation,
+    flux_weakening: &mut FluxWeakeningController,
     ramped_target_speed: &mut f32,
     dt: f32,
 ) -> FocResult {
@@ -130,7 +161,9 @@ pub async fn execute(
 
     // 速度PI制御（q軸電圧指令生成）- ランプ処理後の速度を使用
     let mut vq_cmd = speed_pi.update(*ramped_target_speed, speed_rpm, dt);
-    let vd_cmd = 0.0; // SPMSM: d軸電流/電圧は0
+
+    // フラックス弱め制御（高速域でd軸負電圧を印加）
+    let vd_cmd = flux_weakening.calculate_vd(speed_rpm, vq_cmd, DEFAULT_V_DC_BUS, dt);
 
     // 停止時の処理：目標速度が0で実際に停止している場合、PI積分項をリセット
     if ramped_target_speed.abs() < 1.0 && speed_rpm.abs() < 1.0 {
@@ -162,6 +195,16 @@ pub async fn execute(
     // SVPWM計算（実際のPWM最大値を使用）
     let pwm_max_duty = motor_driver.max_duty();
     let (duty_u, duty_v, duty_w) = calculate_svpwm(v_alpha, v_beta, DEFAULT_V_DC_BUS, pwm_max_duty);
+
+    // デッドタイム補償（SVPWM計算後、PWM出力前）
+    let (duty_u, duty_v, duty_w) = dead_time_comp.compensate(
+        duty_u,
+        duty_v,
+        duty_w,
+        vq_limited,
+        hall_electrical_angle,
+        pwm_max_duty,
+    );
 
     // デバッグ用：FOC制御の詳細ログ（10Hz = 1000回に1回 @ 10kHz）
     let count = FOC_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);

@@ -2,6 +2,8 @@
 // Hall sensor-based FOC implementation for BLDC motor control
 
 pub mod calibration;
+pub mod dead_time_compensation;
+pub mod flux_weakening;
 pub mod hall_sensor;
 pub mod openloop_six_step;
 pub mod pi_controller;
@@ -11,6 +13,8 @@ pub mod transforms;
 
 // Re-export main types for easier access
 pub use calibration::{CalibrationResult, MotorCalibration};
+pub use dead_time_compensation::DeadTimeCompensation;
+pub use flux_weakening::FluxWeakeningController;
 pub use hall_sensor::HallSensor;
 pub use openloop_six_step::OpenLoopSixStep;
 pub use pi_controller::PiController;

@@ -51,6 +51,12 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
     // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
     let mut calibration = MotorCalibration::new(DEFAULT_POLE_PAIRS, 0.1);
 
+    // デッドタイム補償器初期化
+    let dead_time_comp = foc_mode::create_dead_time_compensation(motor_driver.max_duty());
+
+    // フラックス弱め制御器初期化
+    let mut flux_weakening = foc_mode::create_flux_weakening_controller();
+
     // 制御モード
     let mut control_mode = ControlMode::OpenLoop;
 
@@ -98,6 +104,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
             openloop.reset();
             openloop_mode::reset_execution_counter(); // OpenLoop実行カウンタもリセット
             hall_tim::reset_state(); // TIM4の状態もリセット
+            flux_weakening.reset(); // フラックス弱め制御器もリセット
             ramped_target_speed = 0.0; // 速度ランプもリセット
             control_mode = ControlMode::OpenLoop; // OpenLoopに戻す
 
@@ -172,6 +179,8 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                     &mut hall_sensor,
                     &mut speed_pi,
                     &mut motor_driver,
+                    &dead_time_comp,
+                    &mut flux_weakening,
                     &mut ramped_target_speed,
                     dt,
                 )
@@ -196,6 +205,7 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
                         openloop.reset();
                         openloop_mode::reset_execution_counter();
                         foc_mode::reset_stall_counter();
+                        flux_weakening.reset();
                         ramped_target_speed = 0.0;
 
                         // OpenLoopモードに切り替え

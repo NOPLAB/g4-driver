@@ -97,3 +97,30 @@ pub mod can {
     /// CANビットレート（250kbps）（デフォルト値）
     pub const DEFAULT_BITRATE: u32 = 250_000;
 }
+
+/// デッドタイム補償パラメータ
+pub mod dead_time_compensation {
+    /// 補償有効/無効（デフォルト: 無効）
+    pub const ENABLED: bool = false;
+
+    /// 補償対象のデッドタイム [ns]
+    pub const DEAD_TIME_NS: f32 = 100.0;
+}
+
+/// フラックス弱め制御パラメータ
+pub mod flux_weakening {
+    /// 制御有効/無効（デフォルト: 無効）
+    pub const ENABLED: bool = false;
+
+    /// 弱め制御開始速度 [RPM]
+    pub const MIN_SPEED: f32 = 2000.0;
+
+    /// 最大弱め速度 [RPM]
+    pub const MAX_SPEED: f32 = 4000.0;
+
+    /// 最大弱め率 (0.0-1.0)
+    pub const MAX_WEAKENING_RATIO: f32 = 0.5;
+
+    /// Vdレート制限 [V/s]
+    pub const VD_RATE_LIMIT: f32 = 100.0;
+}
