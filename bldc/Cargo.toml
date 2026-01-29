@@ -1,0 +1,19 @@
+[package]
+name = "bldc"
+version = "0.1.0"
+edition = "2021"
+description = "Hardware-agnostic BLDC motor control library"
+license = "MIT"
+
+[features]
+default = ["hall"]
+hall = []
+encoder = []
+sensorless = []
+std = []
+
+[dependencies]
+libm = "0.2"
+
+[dev-dependencies]
+approx = "0.5"
