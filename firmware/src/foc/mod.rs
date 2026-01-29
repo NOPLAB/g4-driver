@@ -4,7 +4,7 @@
 pub mod calibration;
 pub mod dead_time_compensation;
 pub mod flux_weakening;
-pub mod hall_sensor;
+pub mod hall;
 pub mod openloop_six_step;
 pub mod pi_controller;
 pub mod shaft_position;
@@ -15,7 +15,7 @@ pub mod transforms;
 pub use calibration::{CalibrationResult, MotorCalibration};
 pub use dead_time_compensation::DeadTimeCompensation;
 pub use flux_weakening::FluxWeakeningController;
-pub use hall_sensor::HallSensor;
+pub use hall::HallSensor;
 pub use openloop_six_step::OpenLoopSixStep;
 pub use pi_controller::PiController;
 pub use svpwm::calculate_svpwm;

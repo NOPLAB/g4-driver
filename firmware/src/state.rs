@@ -128,121 +128,35 @@ pub static SYSTEM_CONTEXT: Mutex<ThreadModeRawMutex, SystemContext> =
     Mutex::new(SystemContext::new());
 
 // ========================================
-// MotorContext ヘルパー関数
+// 直接コンテキストアクセス関数
 // ========================================
+// 複数のフィールドを同時に読み書きする場合に有用。
+// 1回のロックで複数の操作を行うことでオーバーヘッドを削減。
 
-/// 目標速度を取得
-#[allow(dead_code)]
-pub async fn get_target_speed() -> f32 {
-    MOTOR_CONTEXT.lock().await.target_speed
+pub use embassy_sync::mutex::MutexGuard;
+
+/// モーターコンテキストへの直接アクセスを取得
+///
+/// # Example
+/// ```ignore
+/// {
+///     let mut ctx = state::motor_context().await;
+///     let speed = ctx.target_speed;
+///     ctx.target_speed = 3000.0;
+/// }
+/// ```
+pub async fn motor_context() -> MutexGuard<'static, ThreadModeRawMutex, MotorContext> {
+    MOTOR_CONTEXT.lock().await
 }
 
-/// 目標速度を設定
-pub async fn set_target_speed(speed: f32) {
-    MOTOR_CONTEXT.lock().await.target_speed = speed;
+/// キャリブレーションコンテキストへの直接アクセスを取得
+pub async fn calibration_context() -> MutexGuard<'static, ThreadModeRawMutex, CalibrationContext> {
+    CALIBRATION_CONTEXT.lock().await
 }
 
-/// PIゲインを取得
-#[allow(dead_code)]
-pub async fn get_pi_gains() -> (f32, f32) {
-    MOTOR_CONTEXT.lock().await.pi_gains
-}
-
-/// PIゲインを設定
-pub async fn set_pi_gains(kp: f32, ki: f32) {
-    MOTOR_CONTEXT.lock().await.pi_gains = (kp, ki);
-}
-
-/// モーター有効フラグを取得
-pub async fn get_motor_enabled() -> bool {
-    MOTOR_CONTEXT.lock().await.enabled
-}
-
-/// モーター有効フラグを設定
-pub async fn set_motor_enabled(enabled: bool) {
-    MOTOR_CONTEXT.lock().await.enabled = enabled;
-}
-
-/// モーターステータスを取得
-#[allow(dead_code)]
-pub async fn get_motor_status() -> MotorStatus {
-    MOTOR_CONTEXT.lock().await.status
-}
-
-/// 制御モードを設定
-pub async fn set_control_mode(mode: ControlMode) {
-    MOTOR_CONTEXT.lock().await.control_mode = mode;
-}
-
-// ========================================
-// CalibrationContext ヘルパー関数
-// ========================================
-
-/// キャリブレーションリクエストを取得
-pub async fn get_calibration_request() -> bool {
-    CALIBRATION_CONTEXT.lock().await.request
-}
-
-/// キャリブレーションリクエストを設定
-pub async fn set_calibration_request(request: bool) {
-    CALIBRATION_CONTEXT.lock().await.request = request;
-}
-
-/// キャリブレーショントルクを取得
-pub async fn get_calibration_torque() -> u8 {
-    CALIBRATION_CONTEXT.lock().await.torque
-}
-
-/// キャリブレーショントルクを設定
-pub async fn set_calibration_torque(torque: u8) {
-    CALIBRATION_CONTEXT.lock().await.torque = torque;
-}
-
-/// キャリブレーション結果を取得
-pub async fn get_calibration_result() -> CalibrationResult {
-    CALIBRATION_CONTEXT.lock().await.result
-}
-
-/// キャリブレーション結果を設定
-pub async fn set_calibration_result(result: CalibrationResult) {
-    CALIBRATION_CONTEXT.lock().await.result = result;
-}
-
-// ========================================
-// SystemContext ヘルパー関数
-// ========================================
-
-/// 電圧状態を取得
-#[allow(dead_code)]
-pub async fn get_voltage_state() -> VoltageMonitorState {
-    SYSTEM_CONTEXT.lock().await.voltage_state
-}
-
-/// 電圧状態を設定
-pub async fn set_voltage_state(state: VoltageMonitorState) {
-    SYSTEM_CONTEXT.lock().await.voltage_state = state;
-}
-
-/// ランタイム設定を取得
-pub async fn get_runtime_config() -> StoredConfig {
-    SYSTEM_CONTEXT.lock().await.runtime_config
-}
-
-/// 設定バージョンを取得
-#[allow(dead_code)]
-pub async fn get_config_version() -> u16 {
-    SYSTEM_CONTEXT.lock().await.config_version
-}
-
-/// CRC検証フラグを取得
-#[allow(dead_code)]
-pub async fn get_config_crc_valid() -> bool {
-    SYSTEM_CONTEXT.lock().await.config_crc_valid
-}
-
-/// CRC検証フラグを設定
-pub async fn set_config_crc_valid(valid: bool) {
-    SYSTEM_CONTEXT.lock().await.config_crc_valid = valid;
+/// システムコンテキストへの直接アクセスを取得
+pub async fn system_context() -> MutexGuard<'static, ThreadModeRawMutex, SystemContext> {
+    SYSTEM_CONTEXT.lock().await
 }
 
 // ========================================

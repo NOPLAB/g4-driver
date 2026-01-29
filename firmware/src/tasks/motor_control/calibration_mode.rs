@@ -85,14 +85,14 @@ pub async fn execute(
                     info!("  Direction inversed: {}", result.direction_inversed);
 
                     // 結果をグローバル状態に保存
-                    state::set_calibration_result(result).await;
+                    state::calibration_context().await.result = result;
 
                     // Hall センサーに結果を適用
                     hall_sensor.set_electrical_offset(result.electrical_offset);
                     // TODO: 方向反転の適用（HallSensor に direction_inversed を追加する必要がある）
 
                     // ClosedLoopFocモードに切り替え
-                    state::set_control_mode(ControlMode::ClosedLoopFoc).await;
+                    state::motor_context().await.control_mode = ControlMode::ClosedLoopFoc;
 
                     info!("Switching to ClosedLoopFoc mode");
                     return Some(ControlMode::ClosedLoopFoc);
@@ -102,7 +102,7 @@ pub async fn execute(
                     motor_driver.stop();
 
                     // OpenLoopモードに戻る
-                    state::set_control_mode(ControlMode::OpenLoop).await;
+                    state::motor_context().await.control_mode = ControlMode::OpenLoop;
 
                     return Some(ControlMode::OpenLoop);
                 }
@@ -114,7 +114,7 @@ pub async fn execute(
             motor_driver.stop();
 
             // OpenLoopモードに戻る
-            state::set_control_mode(ControlMode::OpenLoop).await;
+            state::motor_context().await.control_mode = ControlMode::OpenLoop;
 
             return Some(ControlMode::OpenLoop);
         }

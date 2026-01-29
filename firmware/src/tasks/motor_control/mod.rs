@@ -5,18 +5,21 @@
 
 mod calibration_mode;
 mod foc_mode;
+mod mode;
 mod openloop_mode;
+mod resources;
 
 use embassy_stm32::{peripherals, timer::complementary_pwm::ComplementaryPwm};
 use embassy_time::{Duration, Timer};
 
 use crate::config::*;
 use crate::fmt::*;
-use crate::foc::{ControlMode, HallSensor, MotorCalibration, OpenLoopSixStep, PiController};
-use crate::hall_tim;
+use crate::foc::ControlMode;
 use crate::motor_driver::MotorDriver;
 use crate::state;
-use core::f32::consts::PI;
+
+use mode::TransitionResult;
+use resources::ControllerResources;
 
 /// モーター制御タスク（10kHz FOC制御ループ）
 #[embassy_executor::task]
@@ -26,42 +29,11 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
     // モータードライバー初期化
     let mut motor_driver = MotorDriver::new(uvw_pwm);
 
-    // ホールセンサ初期化（foc-simple互換の機械角ベース計算）
-    let mut hall_sensor = HallSensor::new(DEFAULT_POLE_PAIRS, DEFAULT_SPEED_FILTER_ALPHA);
-    hall_sensor.set_interpolation(false); // 角度補間を無効化（ノイズ対策）
-
-    // 電気オフセットを設定（キャリブレーション値）
-    let offset_rad = DEFAULT_HALL_ANGLE_OFFSET_DEG * PI / 180.0;
-    hall_sensor.set_electrical_offset(offset_rad);
-
-    // 速度PIコントローラ初期化（アンチワインドアップ有効）
-    let mut speed_pi =
-        PiController::new_symmetric(DEFAULT_SPEED_KP, DEFAULT_SPEED_KI, DEFAULT_MAX_VOLTAGE);
-    speed_pi.set_anti_windup(true);
-
-    // オープンループ始動コントローラ初期化
-    let mut openloop = OpenLoopSixStep::new(
-        openloop::DEFAULT_INITIAL_RPM,
-        openloop::DEFAULT_TARGET_RPM,
-        openloop::DEFAULT_ACCELERATION_RPM_PER_S,
-        openloop::DEFAULT_DUTY_RATIO,
-        DEFAULT_POLE_PAIRS,
-    );
-
-    // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
-    let mut calibration = MotorCalibration::new(DEFAULT_POLE_PAIRS, 0.1);
-
-    // デッドタイム補償器初期化
-    let dead_time_comp = foc_mode::create_dead_time_compensation(motor_driver.max_duty());
-
-    // フラックス弱め制御器初期化
-    let mut flux_weakening = foc_mode::create_flux_weakening_controller();
+    // 制御リソース初期化
+    let mut resources = ControllerResources::new(motor_driver.max_duty());
 
     // 制御モード
     let mut control_mode = ControlMode::OpenLoop;
-
-    // 速度ランプ（加速度制限）用の現在指令速度
-    let mut ramped_target_speed: f32 = 0.0;
 
     // 制御周期
     let dt = DEFAULT_CONTROL_PERIOD_US as f32 / 1_000_000.0; // 秒に変換
@@ -81,14 +53,9 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
     // モーター有効状態の追跡（PWMチャネル制御用）
     let mut was_enabled = false;
 
-    // デバッグ用ループカウンター
-    let mut loop_counter: u32 = 0;
-
     loop {
-        loop_counter = loop_counter.wrapping_add(1);
-
         // 1. モーター使能チェック
-        let motor_enabled = state::get_motor_enabled().await;
+        let motor_enabled = state::motor_context().await.enabled;
         if !motor_enabled {
             if was_enabled {
                 info!("Motor control loop: Disabling PWM channels");
@@ -98,15 +65,9 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
             // モーター停止：PWMチャネルを完全無効化
             motor_driver.stop();
 
-            // 各コントローラとセンサーをリセット
-            speed_pi.reset();
-            hall_sensor.reset();
-            openloop.reset();
-            openloop_mode::reset_execution_counter(); // OpenLoop実行カウンタもリセット
-            hall_tim::reset_state(); // TIM4の状態もリセット
-            flux_weakening.reset(); // フラックス弱め制御器もリセット
-            ramped_target_speed = 0.0; // 速度ランプもリセット
-            control_mode = ControlMode::OpenLoop; // OpenLoopに戻す
+            // 全リソースをリセット
+            resources.reset_all();
+            control_mode = ControlMode::OpenLoop;
 
             Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
             continue;
@@ -120,116 +81,142 @@ pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::
         }
 
         // 2. キャリブレーションリクエストをチェック
-        {
-            let calibration_request = state::get_calibration_request().await;
-            if calibration_request {
-                info!("Calibration requested, switching to Calibration mode");
-                state::set_calibration_request(false).await; // リクエストをクリア
+        if let Some(torque_f32) = check_calibration_request().await {
+            info!("Starting motor calibration...");
+            info!("  Pole pairs: {}", DEFAULT_POLE_PAIRS);
+            info!("  Torque: {}", torque_f32);
 
-                // トルク値を取得（0-100 → 0.0-1.0に変換）
-                let torque_u8 = state::get_calibration_torque().await;
-                let torque_f32 = torque_u8 as f32 / 100.0;
-                info!("Starting motor calibration...");
-                info!("  Pole pairs: {}", DEFAULT_POLE_PAIRS);
-                info!("  Torque: {}", torque_f32);
-                calibration.set_torque(torque_f32);
-
-                control_mode = ControlMode::Calibration;
-                calibration.start();
-
-                // 制御モードをグローバル状態に反映
-                state::set_control_mode(ControlMode::Calibration).await;
-            }
+            resources.prepare_for_calibration(torque_f32);
+            control_mode = ControlMode::Calibration;
+            state::motor_context().await.control_mode = ControlMode::Calibration;
         }
 
         // 3. 制御モード別処理
-        match control_mode {
-            ControlMode::OpenLoop => {
-                // オープンループ制御を実行
-                let (should_switch, _hall_state) =
-                    openloop_mode::execute(&mut openloop, &hall_sensor, &mut motor_driver, dt)
-                        .await;
+        let transition =
+            execute_control_mode(control_mode, &mut resources, &mut motor_driver, dt).await;
 
-                // OpenLoopからFOCへの切り替え判定
-                if should_switch {
-                    control_mode = ControlMode::ClosedLoopFoc;
+        // 4. モード遷移処理
+        if let Some(next_mode) = transition.next_mode() {
+            on_mode_exit(control_mode, &mut resources);
+            control_mode = next_mode;
+            on_mode_enter(next_mode, &mut resources);
+        }
 
-                    // 強制転流時の速度を引き継ぐ
-                    let current_rpm = openloop.get_current_rpm();
+        Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
+    }
+}
 
-                    // PI制御をリセット（クリーンな状態からスタート）
-                    speed_pi.reset();
+/// キャリブレーションリクエストをチェック
+///
+/// # Returns
+/// `Some(torque)` - キャリブレーション開始時のトルク値（0.0-1.0）
+/// `None` - キャリブレーションリクエストなし
+async fn check_calibration_request() -> Option<f32> {
+    let mut calib_ctx = state::calibration_context().await;
+    if calib_ctx.request {
+        info!("Calibration requested, switching to Calibration mode");
+        calib_ctx.request = false;
+        let torque_f32 = calib_ctx.torque as f32 / 100.0;
+        Some(torque_f32)
+    } else {
+        None
+    }
+}
 
-                    // FOCの脱落カウンタをリセット
-                    foc_mode::reset_stall_counter();
+/// 制御モード別処理を実行
+async fn execute_control_mode(
+    mode: ControlMode,
+    resources: &mut ControllerResources,
+    motor_driver: &mut MotorDriver,
+    dt: f32,
+) -> TransitionResult {
+    match mode {
+        ControlMode::OpenLoop => {
+            let (should_switch, _hall_state) = openloop_mode::execute(
+                &mut resources.openloop,
+                &resources.hall_sensor,
+                motor_driver,
+                dt,
+            )
+            .await;
 
-                    // Hall センサーの速度フィルタを現在の速度で初期化
-                    hall_sensor.reset_speed_filter(current_rpm);
-
-                    // ランプも現在の速度からスタート（急激な変化を防ぐ）
-                    ramped_target_speed = current_rpm;
-
-                    info!("Switching to FOC mode: speed={} RPM", current_rpm);
-                }
+            if should_switch {
+                TransitionResult::TransitionTo(ControlMode::ClosedLoopFoc)
+            } else {
+                TransitionResult::Continue
             }
+        }
 
-            ControlMode::ClosedLoopFoc => {
-                // FOC制御を実行
-                let result = foc_mode::execute(
-                    &mut hall_sensor,
-                    &mut speed_pi,
-                    &mut motor_driver,
-                    &dead_time_comp,
-                    &mut flux_weakening,
-                    &mut ramped_target_speed,
-                    dt,
-                )
-                .await;
+        ControlMode::ClosedLoopFoc => {
+            let result = foc_mode::execute(
+                &mut resources.hall_sensor,
+                &mut resources.speed_pi,
+                motor_driver,
+                &resources.dead_time_comp,
+                &mut resources.flux_weakening,
+                &mut resources.ramped_target_speed,
+                dt,
+            )
+            .await;
 
-                match result {
-                    foc_mode::FocResult::Continue => {
-                        // 正常継続
-                    }
-                    foc_mode::FocResult::InvalidHall => {
-                        // Hall状態が無効な場合は処理をスキップ
-                        Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
-                        continue;
-                    }
-                    foc_mode::FocResult::Stalled => {
-                        // 速度低下検出: OpenLoopからやり直し
-                        info!("FOC stalled, restarting from OpenLoop mode");
-
-                        // 各コントローラをリセット
-                        speed_pi.reset();
-                        hall_sensor.reset();
-                        openloop.reset();
-                        openloop_mode::reset_execution_counter();
-                        foc_mode::reset_stall_counter();
-                        flux_weakening.reset();
-                        ramped_target_speed = 0.0;
-
-                        // OpenLoopモードに切り替え
-                        control_mode = ControlMode::OpenLoop;
-                    }
+            match result {
+                foc_mode::FocResult::Continue | foc_mode::FocResult::InvalidHall => {
+                    TransitionResult::Continue
                 }
-            }
-
-            ControlMode::Calibration => {
-                // キャリブレーション制御を実行
-                if let Some(next_mode) = calibration_mode::execute(
-                    &mut calibration,
-                    &mut hall_sensor,
-                    &mut motor_driver,
-                    dt,
-                )
-                .await
-                {
-                    // キャリブレーション完了、次のモードに移行
-                    control_mode = next_mode;
+                foc_mode::FocResult::Stalled => {
+                    info!("FOC stalled, restarting from OpenLoop mode");
+                    TransitionResult::TransitionTo(ControlMode::OpenLoop)
                 }
             }
         }
 
-        Timer::after(Duration::from_micros(DEFAULT_CONTROL_PERIOD_US)).await;
+        ControlMode::Calibration => {
+            if let Some(next_mode) = calibration_mode::execute(
+                &mut resources.calibration,
+                &mut resources.hall_sensor,
+                motor_driver,
+                dt,
+            )
+            .await
+            {
+                TransitionResult::TransitionTo(next_mode)
+            } else {
+                TransitionResult::Continue
+            }
+        }
+    }
+}
+
+/// モード退出時の処理
+fn on_mode_exit(mode: ControlMode, resources: &mut ControllerResources) {
+    match mode {
+        ControlMode::OpenLoop => {
+            // OpenLoop終了時：現在の速度を保存
+            // （FOC移行時に使用）
+        }
+        ControlMode::ClosedLoopFoc => {
+            // FOC終了時：特別な処理なし
+        }
+        ControlMode::Calibration => {
+            // キャリブレーション終了時：特別な処理なし
+        }
+    }
+    let _ = (mode, resources); // 将来の拡張用にパラメータを保持
+}
+
+/// モード開始時の処理
+fn on_mode_enter(mode: ControlMode, resources: &mut ControllerResources) {
+    match mode {
+        ControlMode::OpenLoop => {
+            resources.prepare_for_openloop();
+        }
+        ControlMode::ClosedLoopFoc => {
+            let current_rpm = resources.openloop.get_current_rpm();
+            resources.prepare_for_foc(current_rpm);
+            info!("Switching to FOC mode: speed={} RPM", current_rpm);
+        }
+        ControlMode::Calibration => {
+            // calibrationの準備はcheck_calibration_requestで既に実行済み
+        }
     }
 }

@@ -61,7 +61,7 @@ impl ConfigLoader {
         info!("  Pole pairs: {}", loaded_config.pole_pairs);
 
         // PIゲインをMotorContextに適用
-        state::set_pi_gains(loaded_config.speed_kp, loaded_config.speed_ki).await;
+        state::motor_context().await.pi_gains = (loaded_config.speed_kp, loaded_config.speed_ki);
 
         // キャリブレーション結果をCalibrationContextに適用
         state::apply_calibration_from_config(&loaded_config).await;

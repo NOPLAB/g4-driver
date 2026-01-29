@@ -60,11 +60,11 @@ pub async fn voltage_monitor_task(
         let state = monitor.update(adc_raw);
 
         // グローバル状態を更新（CAN送信用）
-        state::set_voltage_state(state).await;
+        state::system_context().await.voltage_state = state;
 
         // 過電圧/低電圧時はモーターを自動停止
         if !state.is_voltage_ok() {
-            let was_enabled = state::get_motor_enabled().await;
+            let was_enabled = state::motor_context().await.enabled;
             if was_enabled {
                 error!(
                     "Voltage fault detected! Disabling motor. Voltage: {}V, OV: {}, UV: {}",

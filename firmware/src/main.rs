@@ -62,7 +62,7 @@ async fn main(spawner: Spawner) {
 
     // 自動キャリブレーション設定（設定が未保存の場合に実行）
     if needs_calibration {
-        state::set_calibration_request(true).await;
+        state::calibration_context().await.request = true;
         info!("Auto-calibration enabled (no saved config found)");
     }
 
@@ -73,7 +73,9 @@ async fn main(spawner: Spawner) {
     let led1 = Output::new(p.PC13, Level::High, Speed::Low);
     let led2 = Output::new(p.PC14, Level::High, Speed::Low);
     let led3 = Output::new(p.PC15, Level::High, Speed::Low);
-    spawner.spawn(led_task(led1, led2, led3)).unwrap();
+    if spawner.spawn(led_task(led1, led2, led3)).is_err() {
+        error!("Failed to spawn led_task");
+    }
 
     // CAN初期化＆タスク起動
     let mut can_configurator = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
@@ -87,7 +89,9 @@ async fn main(spawner: Spawner) {
     );
     can_configurator.set_bitrate(config::can::DEFAULT_BITRATE);
     let can = can_configurator.start(can::OperatingMode::NormalOperationMode);
-    spawner.spawn(can_task(can, flash, crc)).unwrap();
+    if spawner.spawn(can_task(can, flash, crc)).is_err() {
+        error!("Failed to spawn can_task");
+    }
 
     // ADC初期化
     let mut adc2 = Adc::new(p.ADC2);
@@ -95,10 +99,14 @@ async fn main(spawner: Spawner) {
 
     // 電圧監視タスク起動（PC1 = ADC2_IN7）
     let voltage_pin = p.PC1.degrade_adc();
-    spawner
+    if spawner
         .spawn(voltage_monitor_task(adc2, voltage_pin))
-        .unwrap();
-    info!("Voltage monitoring started on PC1 (ADC2_IN7)");
+        .is_err()
+    {
+        error!("Failed to spawn voltage_monitor_task");
+    } else {
+        info!("Voltage monitoring started on PC1 (ADC2_IN7)");
+    }
 
     // PWM初期化（TIM1、3相補完PWM）
     let mut uvw_pwm = ComplementaryPwm::new(
@@ -148,7 +156,9 @@ async fn main(spawner: Spawner) {
     info!("Starting FOC motor control...");
 
     // モーター制御タスクを起動
-    spawner.spawn(motor_control_task(uvw_pwm)).unwrap();
+    if spawner.spawn(motor_control_task(uvw_pwm)).is_err() {
+        error!("Failed to spawn motor_control_task - CRITICAL");
+    }
 
     // メインループ（将来の拡張用）
     loop {

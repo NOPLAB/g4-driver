@@ -54,17 +54,17 @@ pub async fn can_task(
                         match id_raw {
                             can_ids::SPEED_CMD => {
                                 if let Some(speed) = parse_speed_command(data) {
-                                    state::set_target_speed(speed).await;
+                                    state::motor_context().await.target_speed = speed;
                                 }
                             }
                             can_ids::PI_GAINS => {
                                 if let Some((kp, ki)) = parse_pi_gains(data) {
-                                    state::set_pi_gains(kp, ki).await;
+                                    state::motor_context().await.pi_gains = (kp, ki);
                                 }
                             }
                             can_ids::ENABLE_CMD => {
                                 if let Some(enable) = parse_enable_command(data) {
-                                    state::set_motor_enabled(enable).await;
+                                    state::motor_context().await.enabled = enable;
                                     if enable {
                                         info!("Motor ENABLED via CAN");
                                     } else {
@@ -81,19 +81,21 @@ pub async fn can_task(
                                     20 // デフォルト値
                                 };
                                 info!("Calibration torque: {}", torque);
-                                state::set_calibration_torque(torque).await;
-                                // キャリブレーションリクエストフラグを設定
-                                state::set_calibration_request(true).await;
+                                {
+                                    let mut ctx = state::calibration_context().await;
+                                    ctx.torque = torque;
+                                    ctx.request = true;
+                                }
                                 info!("Calibration request flag set");
                             }
                             can_ids::SAVE_CONFIG => {
                                 info!("Save config command received");
 
-                                // 現在の設定を取得
-                                let mut cfg = state::get_runtime_config().await;
+                                // 現在の設定とキャリブレーション結果を取得
+                                let mut cfg = state::system_context().await.runtime_config;
+                                let calib_result = state::calibration_context().await.result;
 
                                 // キャリブレーション結果を設定に反映
-                                let calib_result = state::get_calibration_result().await;
                                 cfg.calibration_electrical_offset = calib_result.electrical_offset;
                                 cfg.calibration_direction_inversed = calib_result.direction_inversed;
                                 cfg.calibration_success = calib_result.success;
@@ -102,11 +104,11 @@ pub async fn can_task(
                                 match config::write_config(&mut flash, &mut crc, &mut cfg).await {
                                     Ok(_) => {
                                         info!("Config saved successfully");
-                                        state::set_config_crc_valid(true).await;
+                                        state::system_context().await.config_crc_valid = true;
                                     }
                                     Err(e) => {
                                         error!("Failed to save config: {:?}", e);
-                                        state::set_config_crc_valid(false).await;
+                                        state::system_context().await.config_crc_valid = false;
                                     }
                                 }
                             }
@@ -122,13 +124,13 @@ pub async fn can_task(
                                         state::update_system_config(loaded_config, loaded_config.version, true).await;
 
                                         // PIゲインを更新
-                                        state::set_pi_gains(loaded_config.speed_kp, loaded_config.speed_ki).await;
+                                        state::motor_context().await.pi_gains = (loaded_config.speed_kp, loaded_config.speed_ki);
 
                                         info!("  PI gains: Kp={}, Ki={}", loaded_config.speed_kp, loaded_config.speed_ki);
                                     }
                                     Err(e) => {
                                         error!("Failed to reload config: {:?}", e);
-                                        state::set_config_crc_valid(false).await;
+                                        state::system_context().await.config_crc_valid = false;
                                     }
                                 }
                             }
@@ -144,13 +146,13 @@ pub async fn can_task(
                                         state::update_system_config(default_config, default_config.version, true).await;
 
                                         // PIゲインを更新
-                                        state::set_pi_gains(default_config.speed_kp, default_config.speed_ki).await;
+                                        state::motor_context().await.pi_gains = (default_config.speed_kp, default_config.speed_ki);
 
                                         info!("  PI gains: Kp={}, Ki={}", default_config.speed_kp, default_config.speed_ki);
                                     }
                                     Err(e) => {
                                         error!("Failed to reset config: {:?}", e);
-                                        state::set_config_crc_valid(false).await;
+                                        state::system_context().await.config_crc_valid = false;
                                     }
                                 }
                             }
@@ -238,8 +240,8 @@ pub async fn can_task(
                             }
                         }
                     }
-                    Err(_e) => {
-                        // error!("CAN RX Error: {:?}", _e);
+                    Err(e) => {
+                        warn!("CAN RX error: {:?}", e);
                     }
                 }
             },
