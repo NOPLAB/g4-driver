@@ -414,7 +414,10 @@ pub async fn can_task(
                         }
                     }
                     Err(e) => {
-                        warn!("CAN RX error: {:?}", e);
+                        // CANバス未接続時はエラーログを抑制
+                        if status_enabled {
+                            warn!("CAN RX error: {:?}", e);
+                        }
                     }
                 }
             },
