@@ -20,6 +20,13 @@
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use embassy_stm32::pac;
 
+// ========================================
+// シーケンスロック機構（ISR-タスク間同期）
+// ========================================
+
+/// シーケンス番号（偶数=安定、奇数=更新中）
+static SEQUENCE: AtomicU32 = AtomicU32::new(0);
+
 /// Hallセンサー状態（グローバル共有）
 pub static HALL_STATE: AtomicU8 = AtomicU8::new(0);
 
@@ -209,13 +216,19 @@ pub unsafe fn tim4_irq_handler() {
         // 周期 = overflow * 65536 + capture が前回リセットからの絶対経過サイクル数になる
         let period = (overflow << 16) | capture;
 
-        // 4. グローバル変数更新
-        HALL_STATE.store(hall_state, Ordering::Relaxed);
+        // 4. シーケンスロック開始（奇数=更新中）
+        SEQUENCE.fetch_add(1, Ordering::Release);
+
+        // 5. グローバル変数更新（Release ordering）
+        HALL_STATE.store(hall_state, Ordering::Release);
         LAST_CAPTURE.store(capture, Ordering::Relaxed);
         LAST_OVERFLOW.store(overflow, Ordering::Relaxed); // デバッグ用に保持
-        PERIOD_CYCLES.store(period, Ordering::Relaxed);
+        PERIOD_CYCLES.store(period, Ordering::Release);
         OVERFLOW_COUNTER.store(0, Ordering::Relaxed); // リセット（次のエッジまでの計測開始）
-        TIMEOUT_FLAG.store(0, Ordering::Relaxed); // タイムアウト解除
+        TIMEOUT_FLAG.store(0, Ordering::Release); // タイムアウト解除
+
+        // 6. シーケンスロック終了（偶数=安定）
+        SEQUENCE.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -228,21 +241,67 @@ pub unsafe extern "C" fn TIM4() {
 }
 
 /// Hall状態を取得（TIM4割り込みでキャプチャされた値）
+///
+/// 注: 一貫性が必要な場合は `get_snapshot()` を使用してください
 #[inline(always)]
 pub fn get_hall_state() -> u8 {
-    HALL_STATE.load(Ordering::Relaxed)
+    HALL_STATE.load(Ordering::Acquire)
 }
 
 /// 周期（サイクル数）を取得
+///
+/// 注: 一貫性が必要な場合は `get_snapshot()` を使用してください
 #[inline(always)]
 pub fn get_period_cycles() -> u32 {
-    PERIOD_CYCLES.load(Ordering::Relaxed)
+    PERIOD_CYCLES.load(Ordering::Acquire)
 }
 
 /// タイムアウトフラグを取得
+///
+/// 注: 一貫性が必要な場合は `get_snapshot()` を使用してください
 #[inline(always)]
+#[allow(dead_code)]
 pub fn is_timeout() -> bool {
-    TIMEOUT_FLAG.load(Ordering::Relaxed) != 0
+    TIMEOUT_FLAG.load(Ordering::Acquire) != 0
+}
+
+// ========================================
+// アトミックスナップショットAPI
+// ========================================
+
+/// Hallセンサーの一貫したスナップショットを取得
+///
+/// シーケンスロックを使用して、ISR更新中のデータを読まないことを保証します。
+/// 3つの値（hall_state, period_cycles, is_timeout）が同じISRサイクルの
+/// データであることが保証されます。
+///
+/// # Returns
+/// Tuple of (hall_state, period_cycles, is_timeout)
+#[inline(always)]
+pub fn get_snapshot() -> (u8, u32, bool) {
+    loop {
+        // シーケンス番号を読む（偶数なら安定状態）
+        let seq1 = SEQUENCE.load(Ordering::Acquire);
+        if seq1 & 1 != 0 {
+            // 奇数 = ISR更新中、リトライ
+            core::hint::spin_loop();
+            continue;
+        }
+
+        // データ読み取り
+        let hall_state = HALL_STATE.load(Ordering::Acquire);
+        let period_cycles = PERIOD_CYCLES.load(Ordering::Acquire);
+        let is_timeout = TIMEOUT_FLAG.load(Ordering::Acquire) != 0;
+
+        // シーケンス番号再確認（変わっていなければ一貫性あり）
+        let seq2 = SEQUENCE.load(Ordering::Acquire);
+        if seq1 == seq2 {
+            return (hall_state, period_cycles, is_timeout);
+        }
+
+        // シーケンスが変わった = 読み取り中にISRが発火した、リトライ
+        core::hint::spin_loop();
+    }
 }
 
 /// TIM4の状態をリセット（モーター停止時に使用）

@@ -49,8 +49,8 @@ impl HallSensorAdapter {
 
     /// Update the Hall sensor and return the result
     ///
-    /// Reads Hall state and timing from TIM4 hardware, then processes
-    /// using the bldc HallProcessor.
+    /// Reads Hall state and timing from TIM4 hardware using atomic snapshot,
+    /// then processes using the bldc HallProcessor.
     ///
     /// # Arguments
     /// * `dt` - Time since last update (seconds)
@@ -58,10 +58,8 @@ impl HallSensorAdapter {
     /// # Returns
     /// Tuple of (electrical_angle, speed_rpm, hall_state)
     pub fn update(&mut self, dt: f32) -> (f32, f32, u8) {
-        // Read from TIM4 hardware
-        let hall_state = hall_tim::get_hall_state();
-        let period_cycles = hall_tim::get_period_cycles();
-        let is_timeout = hall_tim::is_timeout();
+        // Read consistent snapshot from TIM4 hardware (sequence-locked)
+        let (hall_state, period_cycles, is_timeout) = hall_tim::get_snapshot();
 
         // Calculate instantaneous speed from TIM4 period
         let instant_rpm = if !is_timeout && period_cycles > 0 {
