@@ -185,18 +185,8 @@ impl SixStepController {
         if self.elapsed_time >= self.step_period {
             self.elapsed_time = 0.0;
 
-            // Step progression depends on direction
-            if self.reverse {
-                // Reverse: decrement step (5 -> 4 -> 3 -> 2 -> 1 -> 0 -> 5 ...)
-                self.current_step = if self.current_step == 0 {
-                    5
-                } else {
-                    self.current_step - 1
-                };
-            } else {
-                // Forward: increment step (0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0 ...)
-                self.current_step = (self.current_step + 1) % 6;
-            }
+            // Step progression (always forward for now - reverse support disabled)
+            self.current_step = (self.current_step + 1) % 6;
 
             // Accelerate (shorten step period)
             if self.step_period > self.min_step_period {

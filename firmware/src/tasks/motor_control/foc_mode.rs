@@ -70,11 +70,20 @@ impl FocMode {
         let actual_rpm =
             hall_tim::calculate_speed_rpm(period, crate::config::motor::DEFAULT_POLE_PAIRS);
 
-        // 実測値が有効な場合はそれを使用、そうでなければOpenLoopの値を使用
+        // 実測値が有効な場合はそれを使用、そうでなければOpenLoopの理論値を使用
+        // OpenLoopの理論値は常に正なので、逆回転時は符号を付ける
+        let is_reverse = RUNTIME.openloop.is_reverse();
+        let theoretical_rpm = RUNTIME.openloop.get_theoretical_rpm(is_reverse);
+
         let current_rpm = if actual_rpm > 50.0 {
-            actual_rpm
+            // 実測値に方向の符号を付ける
+            if is_reverse {
+                -actual_rpm
+            } else {
+                actual_rpm
+            }
         } else {
-            ctx.resources.openloop.get_current_rpm()
+            theoretical_rpm
         };
 
         ctx.resources.prepare_for_foc(current_rpm);

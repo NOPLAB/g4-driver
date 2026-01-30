@@ -138,10 +138,10 @@ pub mod openloop {
     /// 加速度 [RPM/s]
     pub const DEFAULT_ACCELERATION: f32 = 200.0;
 
-    /// デューティ比 (0-100)（Hall ベース駆動用：15%）
-    pub const DEFAULT_DUTY_RATIO: u16 = 15;
+    /// デューティ比 (0-100)（Hall ベース駆動用：10%）
+    pub const DEFAULT_DUTY_RATIO: u16 = 10;
 
-    /// 強制転流フェーズの実行回数（50000 = 1秒 @ 50kHz）
+    /// SVPWMベース強制転流フェーズの実行回数（50000 = 1秒 @ 50kHz）
     pub const FORCED_COMMUTATION_CYCLES: u32 = 50000;
 
     /// FOC切り替えまでの最小実行回数（50000 = 1秒 @ 50kHz）

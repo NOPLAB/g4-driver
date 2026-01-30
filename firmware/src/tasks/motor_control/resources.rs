@@ -4,7 +4,6 @@
 
 use bldc::calibration::MotorCalibration;
 use bldc::compensation::{DeadTimeCompensation, FluxWeakeningController};
-use bldc::control::six_step::SixStepController;
 use bldc::control::PiController;
 use core::f32::consts::PI;
 
@@ -21,8 +20,6 @@ pub struct ControllerResources {
     pub hall_sensor: HallSensorAdapter,
     /// 速度PIコントローラ
     pub speed_pi: PiController,
-    /// オープンループ始動コントローラ
-    pub openloop: SixStepController,
     /// キャリブレーションコントローラ
     pub calibration: MotorCalibration,
     /// デッドタイム補償器
@@ -51,15 +48,6 @@ impl ControllerResources {
         speed_pi.set_anti_windup(true);
         speed_pi.set_integral_limit(speed::PI_INTEGRAL_LIMIT);
 
-        // オープンループ始動コントローラ初期化
-        let openloop_ctrl = SixStepController::new(
-            openloop::DEFAULT_INITIAL_RPM,
-            openloop::DEFAULT_TARGET_RPM,
-            openloop::DEFAULT_ACCELERATION,
-            openloop::DEFAULT_DUTY_RATIO,
-            motor::DEFAULT_POLE_PAIRS,
-        );
-
         // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
         let calibration = MotorCalibration::new(motor::DEFAULT_POLE_PAIRS, 0.1);
 
@@ -72,7 +60,6 @@ impl ControllerResources {
         Self {
             hall_sensor,
             speed_pi,
-            openloop: openloop_ctrl,
             calibration,
             dead_time_comp,
             flux_weakening,
@@ -84,7 +71,6 @@ impl ControllerResources {
     fn reset_common(&mut self) {
         self.speed_pi.reset();
         self.hall_sensor.reset();
-        self.openloop.reset();
         hall_tim::reset_state();
         self.flux_weakening.reset();
         self.ramped_target_speed = 0.0;

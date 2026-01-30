@@ -1,7 +1,8 @@
 //! オープンループ制御モード
 //!
-//! 強制転流で起動し、SVPWMベースのHall駆動に切り替えます。
-//! FOCへの滑らかな移行を実現するため、Hall駆動フェーズでもSVPWMを使用します。
+//! SVPWMベースの強制転流で起動し、Hallセンサーベースの駆動に移行してFOCへ接続します。
+//! 時間ベースで電気角を進めることで、スムーズな起動を実現します。
+//! 逆回転（負の目標速度）にも対応しています。
 
 use crate::config::motor;
 use crate::config::openloop::{
@@ -49,7 +50,6 @@ impl OpenLoopMode {
 
     /// 1制御サイクルの実行
     pub async fn execute(&self, ctx: &mut ModeContext<'_>) -> ModeResult {
-        let openloop = &mut ctx.resources.openloop;
         let hall_sensor = &mut ctx.resources.hall_sensor;
         let exec_count = RUNTIME.openloop.increment_execution();
         let hall_state = hall_tim::get_hall_state();
@@ -57,28 +57,37 @@ impl OpenLoopMode {
         let pwm_max = ctx.motor_driver.max_duty();
         let is_recovery = RUNTIME.openloop.is_recovery();
 
-        // 目標速度を取得して回転方向を決定
+        // 目標速度から回転方向を決定
         let foc_params = state::get_foc_input_params().await;
         let is_reverse = foc_params.target_speed < 0.0;
-        openloop.set_reverse(is_reverse);
+        RUNTIME.openloop.set_reverse(is_reverse);
 
         // フェーズ別処理
-        let (du, dv, dw, phase) = if exec_count < FORCED_COMMUTATION_CYCLES {
-            // 強制転流フェーズ（従来の6ステップ駆動）
-            let state = openloop.update(ctx.dt);
-            let u = (state.duty_u as u32 * pwm_max as u32 / 100) as u16;
-            let v = (state.duty_v as u32 * pwm_max as u32 / 100) as u16;
-            let w = (state.duty_w as u32 * pwm_max as u32 / 100) as u16;
-            ctx.motor_driver
-                .set_channels(state.enable_u, state.enable_v, state.enable_w);
-            (u, v, w, "Forced")
+        let (du, dv, dw, phase, current_rpm) = if exec_count < FORCED_COMMUTATION_CYCLES {
+            // SVPWMベース強制転流フェーズ
+            // 時間ベースで電気角を進める（逆回転時は逆方向）
+            let electrical_angle = RUNTIME.openloop.increment_angle(ctx.dt, is_reverse);
+
+            // 固定電圧指令（逆回転時は負のVq）
+            let vq_base = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
+            let vq_cmd = if is_reverse { -vq_base } else { vq_base };
+            let vd_cmd = 0.0;
+
+            // Park逆変換 → SVPWM
+            let (v_alpha, v_beta) = inverse_park(vd_cmd, vq_cmd, electrical_angle);
+            let (u, v, w) = calculate_svpwm(v_alpha, v_beta, voltage::DEFAULT_DC_BUS, pwm_max);
+
+            ctx.motor_driver.set_channels(true, true, true);
+
+            // 理論速度を計算（逆回転時は負の値）
+            let theoretical_rpm = RUNTIME.openloop.get_theoretical_rpm(is_reverse);
+            (u, v, w, "Forced", theoretical_rpm)
         } else {
             // Hall駆動フェーズ（SVPWMベース - FOCと同じ駆動方式）
             // Hall センサーから電気角を取得
             let (electrical_angle, _speed_rpm, _hall) = hall_sensor.update(ctx.dt);
 
-            // 固定電圧指令（OpenLoopのDuty相当）
-            // 逆回転時は負のVqを使用
+            // 固定電圧指令（逆回転時は負のVq）
             let vq_base = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
             let vq_cmd = if is_reverse { -vq_base } else { vq_base };
             let vd_cmd = 0.0;
@@ -88,21 +97,24 @@ impl OpenLoopMode {
             let (u, v, w) = calculate_svpwm(v_alpha, v_beta, voltage::DEFAULT_DC_BUS, pwm_max);
 
             ctx.motor_driver.set_channels(true, true, true);
-            (u, v, w, "SVPWM")
+
+            // Hallセンサーからの実測速度（逆回転時は負の値として報告）
+            let period = hall_tim::get_period_cycles();
+            let measured_rpm = hall_tim::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
+            let signed_rpm = if is_reverse {
+                -measured_rpm
+            } else {
+                measured_rpm
+            };
+            (u, v, w, "SVPWM", signed_rpm)
         };
 
         ctx.motor_driver.set_duty_uvw(du, dv, dw);
 
-        // ステータス更新（逆回転時は負の速度として報告）
-        let current_rpm = openloop.get_current_rpm();
-        let signed_rpm = if is_reverse {
-            -current_rpm
-        } else {
-            current_rpm
-        };
-        RUNTIME.status.update(signed_rpm, 0.0);
+        // ステータス更新
+        RUNTIME.status.update(current_rpm, 0.0);
 
-        // 速度計算
+        // 速度計算（FOC切り替え判定用）
         let period = hall_tim::get_period_cycles();
         let speed = hall_tim::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
 
@@ -111,19 +123,19 @@ impl OpenLoopMode {
         if log_count >= 10000 {
             RUNTIME.openloop.reset_log();
             let mode = if is_recovery { "(R)" } else { "" };
+            let dir = if is_reverse { " REV" } else { "" };
             info!(
-                "[{}{}] Hall:{}, Speed:{} RPM, Duty:{}/{}/{}, Cycle:{}",
-                phase, mode, hall_state, speed, du, dv, dw, exec_count
+                "[{}{}{}] Hall:{}, Speed:{} RPM, Duty:{}/{}/{}, Cycle:{}",
+                phase, mode, dir, hall_state, speed, du, dv, dw, exec_count
             );
         }
 
         // フェーズ切り替えログ
-        if exec_count == FORCED_COMMUTATION_CYCLES {
-            info!("[OpenLoop] Switching to SVPWM-based Hall commutation");
+        if exec_count == FORCED_COMMUTATION_CYCLES && FORCED_COMMUTATION_CYCLES > 0 {
+            info!("[OpenLoop] Switching to Hall-based SVPWM commutation");
         }
 
         // FOC切り替え判定
-        // 低速域が不安定なモーター向けに、通常起動時も速度チェックを実施
         let time_ok = exec_count >= MIN_CYCLES_BEFORE_FOC;
         let speed_ok = speed >= MIN_SPEED_FOR_FOC;
 
