@@ -1,12 +1,11 @@
-// Allow dead code for deprecated legacy methods
-#![allow(dead_code)]
+//! CAN communication manager using SLCAN
+//!
+//! This module provides CAN communication through USB-CAN adapters
+//! using the SLCAN protocol for cross-platform compatibility.
 
 use anyhow::{Context, Result};
-use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
-use tokio_socketcan::{CANFrame, CANSocket};
 use tracing::{debug, info};
 
 use g4_driver_protocol::{
@@ -14,60 +13,84 @@ use g4_driver_protocol::{
 };
 
 use super::commands::MotorCommand;
+use super::slcan::{CanFrame, SlcanBitrate, SlcanStream};
 
-/// CAN Manager for handling CAN communication
+/// CAN Manager for handling CAN communication via SLCAN
 pub struct CanManager {
-    socket: Arc<Mutex<Option<CANSocket>>>,
-    interface_name: String,
+    stream: Arc<Mutex<Option<SlcanStream>>>,
+    port_path: String,
 }
 
 impl CanManager {
     /// Create a new CAN manager
     pub fn new() -> Self {
         Self {
-            socket: Arc::new(Mutex::new(None)),
-            interface_name: String::new(),
+            stream: Arc::new(Mutex::new(None)),
+            port_path: String::new(),
         }
     }
 
-    /// Connect to CAN interface
+    /// Connect to a serial port with SLCAN adapter
     ///
     /// # Arguments
-    /// * `interface` - CAN interface name (e.g., "can0", "vcan0")
-    pub async fn connect(&mut self, interface: &str) -> Result<()> {
-        info!("Connecting to CAN interface: {}", interface);
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyACM0", "COM3")
+    /// * `bitrate` - CAN bus bitrate (default: 250kbps)
+    pub async fn connect(&mut self, port_path: &str) -> Result<()> {
+        self.connect_with_bitrate(port_path, SlcanBitrate::B250K)
+            .await
+    }
 
-        let socket = CANSocket::open(interface)
-            .with_context(|| format!("Failed to open CAN interface: {}", interface))?;
+    /// Connect to a serial port with specified CAN bitrate
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path
+    /// * `bitrate` - CAN bus bitrate
+    pub async fn connect_with_bitrate(
+        &mut self,
+        port_path: &str,
+        bitrate: SlcanBitrate,
+    ) -> Result<()> {
+        info!(
+            "Connecting to SLCAN adapter: {} at {} bps",
+            port_path,
+            bitrate.to_bps()
+        );
 
-        *self.socket.lock().await = Some(socket);
-        self.interface_name = interface.to_string();
+        let stream = SlcanStream::connect(port_path, bitrate)
+            .await
+            .with_context(|| format!("Failed to connect to SLCAN adapter: {}", port_path))?;
 
-        info!("Successfully connected to {}", interface);
+        *self.stream.lock().await = Some(stream);
+        self.port_path = port_path.to_string();
+
+        info!("Successfully connected to {}", port_path);
         Ok(())
     }
 
     /// Disconnect from CAN interface
     pub async fn disconnect(&mut self) {
-        info!("Disconnecting from CAN interface");
-        *self.socket.lock().await = None;
-        self.interface_name.clear();
+        info!("Disconnecting from SLCAN adapter");
+
+        if let Some(mut stream) = self.stream.lock().await.take() {
+            let _ = stream.disconnect().await;
+        }
+        self.port_path.clear();
     }
 
     /// Check if connected
     #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
-        self.socket.lock().await.is_some()
+        self.stream.lock().await.is_some()
     }
 
-    /// Get current interface name
+    /// Get current port path
     #[allow(dead_code)]
-    pub fn interface_name(&self) -> &str {
-        &self.interface_name
+    pub fn port_path(&self) -> &str {
+        &self.port_path
     }
 
     // ========================================================================
-    // New Unified API
+    // Unified API
     // ========================================================================
 
     /// Send a motor command using the unified API
@@ -86,345 +109,7 @@ impl CanManager {
     }
 
     // ========================================================================
-    // Legacy API (deprecated - use send() instead)
-    // ========================================================================
-
-    /// Send speed command
-    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::Speed(rpm)) instead")]
-    pub async fn send_speed_command(&self, speed_rpm: f32) -> Result<()> {
-        self.send(MotorCommand::Speed(speed_rpm)).await
-    }
-
-    /// Send PI gains
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::PiGains { kp, ki }) instead"
-    )]
-    pub async fn send_pi_gains(&self, kp: f32, ki: f32) -> Result<()> {
-        self.send(MotorCommand::PiGains { kp, ki }).await
-    }
-
-    /// Send motor enable command
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::Enable(enabled)) instead"
-    )]
-    pub async fn send_enable_command(&self, enable: bool) -> Result<()> {
-        self.send(MotorCommand::Enable(enable)).await
-    }
-
-    /// Send emergency stop command
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::EmergencyStop) instead"
-    )]
-    pub async fn send_emergency_stop(&self) -> Result<()> {
-        info!("Sending emergency stop");
-        self.send(MotorCommand::EmergencyStop).await
-    }
-
-    /// Send save config command
-    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::SaveConfig) instead")]
-    pub async fn send_save_config(&self) -> Result<()> {
-        info!("Sending save config command");
-        self.send(MotorCommand::SaveConfig).await
-    }
-
-    /// Send reload config command
-    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::ReloadConfig) instead")]
-    pub async fn send_reload_config(&self) -> Result<()> {
-        info!("Sending reload config command");
-        self.send(MotorCommand::ReloadConfig).await
-    }
-
-    /// Send reset config command
-    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::ResetConfig) instead")]
-    pub async fn send_reset_config(&self) -> Result<()> {
-        info!("Sending reset config command");
-        self.send(MotorCommand::ResetConfig).await
-    }
-
-    /// Send motor voltage parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::MotorVoltage { max_voltage, v_dc_bus }) instead"
-    )]
-    pub async fn send_motor_voltage_params(&self, max_voltage: f32, v_dc_bus: f32) -> Result<()> {
-        self.send(MotorCommand::MotorVoltage {
-            max_voltage,
-            v_dc_bus,
-        })
-        .await
-    }
-
-    /// Send motor basic parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::MotorBasic { pole_pairs, max_duty }) instead"
-    )]
-    pub async fn send_motor_basic_params(&self, pole_pairs: u8, max_duty: u16) -> Result<()> {
-        self.send(MotorCommand::MotorBasic {
-            pole_pairs,
-            max_duty,
-        })
-        .await
-    }
-
-    /// Send hall sensor parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::HallSensor { speed_filter_alpha, angle_offset }) instead"
-    )]
-    pub async fn send_hall_sensor_params(
-        &self,
-        speed_filter_alpha: f32,
-        hall_angle_offset: f32,
-    ) -> Result<()> {
-        self.send(MotorCommand::HallSensor {
-            speed_filter_alpha,
-            angle_offset: hall_angle_offset,
-        })
-        .await
-    }
-
-    /// Send angle interpolation enable/disable
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::AngleInterpolation(enabled)) instead"
-    )]
-    pub async fn send_angle_interpolation(&self, enable: bool) -> Result<()> {
-        self.send(MotorCommand::AngleInterpolation(enable)).await
-    }
-
-    /// Send openloop RPM parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::OpenLoopRpm { initial_rpm, target_rpm }) instead"
-    )]
-    pub async fn send_openloop_rpm_params(&self, initial_rpm: f32, target_rpm: f32) -> Result<()> {
-        self.send(MotorCommand::OpenLoopRpm {
-            initial_rpm,
-            target_rpm,
-        })
-        .await
-    }
-
-    /// Send openloop acceleration and duty parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::OpenLoopAccelDuty { acceleration, duty_ratio }) instead"
-    )]
-    pub async fn send_openloop_accel_duty_params(
-        &self,
-        acceleration: f32,
-        duty_ratio: u16,
-    ) -> Result<()> {
-        self.send(MotorCommand::OpenLoopAccelDuty {
-            acceleration,
-            duty_ratio,
-        })
-        .await
-    }
-
-    /// Send PWM configuration
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::PwmConfig { frequency, dead_time }) instead"
-    )]
-    pub async fn send_pwm_config(&self, frequency: u32, dead_time: u16) -> Result<()> {
-        self.send(MotorCommand::PwmConfig {
-            frequency,
-            dead_time,
-        })
-        .await
-    }
-
-    /// Send CAN configuration
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::CanConfig(bitrate)) instead"
-    )]
-    pub async fn send_can_config(&self, bitrate: u32) -> Result<()> {
-        self.send(MotorCommand::CanConfig(bitrate)).await
-    }
-
-    /// Send control timing configuration
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::ControlTiming(period_us)) instead"
-    )]
-    pub async fn send_control_timing(&self, control_period_us: u64) -> Result<()> {
-        self.send(MotorCommand::ControlTiming(control_period_us))
-            .await
-    }
-
-    /// Send start calibration command
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::StartCalibration { torque }) instead"
-    )]
-    pub async fn send_start_calibration(&self, torque: Option<u8>) -> Result<()> {
-        info!("Sending start calibration command");
-        self.send(MotorCommand::StartCalibration { torque }).await
-    }
-
-    /// Send advance angle parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::AdvanceAngle { base_deg, max_deg }) instead"
-    )]
-    pub async fn send_advance_angle_params(&self, base_deg: f32, max_deg: f32) -> Result<()> {
-        self.send(MotorCommand::AdvanceAngle { base_deg, max_deg })
-            .await
-    }
-
-    /// Send advance angle speed range
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::AdvanceAngleSpeed { min_speed, max_speed }) instead"
-    )]
-    pub async fn send_advance_angle_speed(&self, min_speed: f32, max_speed: f32) -> Result<()> {
-        self.send(MotorCommand::AdvanceAngleSpeed {
-            min_speed,
-            max_speed,
-        })
-        .await
-    }
-
-    /// Send min voltage parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::MinVoltage { min_voltage, error_threshold }) instead"
-    )]
-    pub async fn send_min_voltage_params(
-        &self,
-        min_voltage: f32,
-        error_threshold: f32,
-    ) -> Result<()> {
-        self.send(MotorCommand::MinVoltage {
-            min_voltage,
-            error_threshold,
-        })
-        .await
-    }
-
-    /// Send max speed acceleration
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::MaxSpeedAccel(accel)) instead"
-    )]
-    pub async fn send_max_speed_accel(&self, max_accel: f32) -> Result<()> {
-        self.send(MotorCommand::MaxSpeedAccel(max_accel)).await
-    }
-
-    /// Send FOC stall detection parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::FocStall { speed_threshold, count_threshold }) instead"
-    )]
-    pub async fn send_foc_stall_params(
-        &self,
-        speed_threshold: f32,
-        count_threshold: u32,
-    ) -> Result<()> {
-        self.send(MotorCommand::FocStall {
-            speed_threshold,
-            count_threshold,
-        })
-        .await
-    }
-
-    /// Send openloop cycles parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::OpenLoopCycles { forced_cycles, min_cycles }) instead"
-    )]
-    pub async fn send_openloop_cycles_params(
-        &self,
-        forced_cycles: u32,
-        min_cycles: u32,
-    ) -> Result<()> {
-        self.send(MotorCommand::OpenLoopCycles {
-            forced_cycles,
-            min_cycles,
-        })
-        .await
-    }
-
-    /// Send dead time compensation parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::DeadTimeComp { enabled, dead_time_ns }) instead"
-    )]
-    pub async fn send_dead_time_comp_params(&self, enabled: bool, dead_time_ns: f32) -> Result<()> {
-        self.send(MotorCommand::DeadTimeComp {
-            enabled,
-            dead_time_ns,
-        })
-        .await
-    }
-
-    /// Send flux weakening enable and min speed
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::FluxWeakeningEnable { enabled, min_speed }) instead"
-    )]
-    pub async fn send_flux_weakening_enable(&self, enabled: bool, min_speed: f32) -> Result<()> {
-        self.send(MotorCommand::FluxWeakeningEnable { enabled, min_speed })
-            .await
-    }
-
-    /// Send flux weakening parameters
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::FluxWeakeningParams { max_speed, max_ratio }) instead"
-    )]
-    pub async fn send_flux_weakening_params(&self, max_speed: f32, max_ratio: f32) -> Result<()> {
-        self.send(MotorCommand::FluxWeakeningParams {
-            max_speed,
-            max_ratio,
-        })
-        .await
-    }
-
-    /// Send flux weakening Vd rate limit
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::FluxWeakeningVd(rate_limit)) instead"
-    )]
-    pub async fn send_flux_weakening_vd(&self, vd_rate_limit: f32) -> Result<()> {
-        self.send(MotorCommand::FluxWeakeningVd(vd_rate_limit))
-            .await
-    }
-
-    /// Send voltage monitor thresholds
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::VoltageMonitorThresholds { overvoltage, undervoltage }) instead"
-    )]
-    pub async fn send_voltage_monitor_thresholds(
-        &self,
-        overvoltage: f32,
-        undervoltage: f32,
-    ) -> Result<()> {
-        self.send(MotorCommand::VoltageMonitorThresholds {
-            overvoltage,
-            undervoltage,
-        })
-        .await
-    }
-
-    /// Send voltage monitor filter alpha
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use send(MotorCommand::VoltageMonitorFilter(alpha)) instead"
-    )]
-    pub async fn send_voltage_monitor_filter(&self, alpha: f32) -> Result<()> {
-        self.send(MotorCommand::VoltageMonitorFilter(alpha)).await
-    }
-
-    // ========================================================================
-    // Receive Methods (not deprecated)
+    // Receive Methods
     // ========================================================================
 
     /// Receive next CAN frame with timeout
@@ -436,22 +121,17 @@ impl CanManager {
     /// * `Ok(Some(frame))` if frame received
     /// * `Ok(None)` if timeout occurred
     /// * `Err` if receive error
-    pub async fn receive_frame(&self, timeout_ms: u64) -> Result<Option<CANFrame>> {
-        let mut socket_guard = self.socket.lock().await;
-        if let Some(socket) = socket_guard.as_mut() {
-            match timeout(Duration::from_millis(timeout_ms), socket.next()).await {
-                Ok(Some(Ok(frame))) => Ok(Some(frame)),
-                Ok(Some(Err(e))) => Err(anyhow::anyhow!("CAN receive error: {}", e)),
-                Ok(None) => Err(anyhow::anyhow!("CAN socket closed")),
-                Err(_) => Ok(None), // Timeout
-            }
+    pub async fn receive_frame(&self, timeout_ms: u64) -> Result<Option<CanFrame>> {
+        let mut stream_guard = self.stream.lock().await;
+        if let Some(stream) = stream_guard.as_mut() {
+            stream.receive_frame(timeout_ms).await
         } else {
-            Err(anyhow::anyhow!("Not connected to CAN interface"))
+            Err(anyhow::anyhow!("Not connected to SLCAN adapter"))
         }
     }
 
     /// Parse motor status from CAN frame
-    pub fn parse_motor_status(frame: &CANFrame) -> Option<MotorStatus> {
+    pub fn parse_motor_status(frame: &CanFrame) -> Option<MotorStatus> {
         if frame.id() == can_ids::STATUS {
             protocol::decode_status(frame.data())
         } else {
@@ -460,7 +140,7 @@ impl CanManager {
     }
 
     /// Parse voltage status from CAN frame
-    pub fn parse_voltage_status(frame: &CANFrame) -> Option<VoltageStatus> {
+    pub fn parse_voltage_status(frame: &CanFrame) -> Option<VoltageStatus> {
         if frame.id() == can_ids::VOLTAGE_STATUS {
             protocol::decode_voltage_status(frame.data())
         } else {
@@ -473,7 +153,7 @@ impl CanManager {
     /// # Returns
     /// * `Some((version, crc_valid))` if config status frame
     /// * `None` if not a config status frame
-    pub fn parse_config_status(frame: &CANFrame) -> Option<(u16, bool)> {
+    pub fn parse_config_status(frame: &CanFrame) -> Option<(u16, bool)> {
         if frame.id() == can_ids::CONFIG_STATUS {
             protocol::decode_config_status(frame.data())
         } else {
@@ -486,7 +166,7 @@ impl CanManager {
     /// # Returns
     /// * `Some(CalibrationStatus)` if calibration status frame
     /// * `None` if not a calibration status frame
-    pub fn parse_calibration_status(frame: &CANFrame) -> Option<CalibrationStatus> {
+    pub fn parse_calibration_status(frame: &CanFrame) -> Option<CalibrationStatus> {
         if frame.id() == can_ids::CALIBRATION_STATUS {
             protocol::decode_calibration_status(frame.data())
         } else {
@@ -504,21 +184,21 @@ impl CanManager {
     /// * `id` - CAN message ID
     /// * `data` - CAN frame data
     async fn send_frame(&self, id: u32, data: &[u8]) -> Result<()> {
-        let socket_guard = self.socket.lock().await;
-        if let Some(socket) = socket_guard.as_ref() {
-            let frame = CANFrame::new(id, data, false, false)
+        let mut stream_guard = self.stream.lock().await;
+        if let Some(stream) = stream_guard.as_mut() {
+            let frame = CanFrame::new(id, data)
                 .with_context(|| format!("Failed to create CAN frame with ID 0x{:X}", id))?;
 
             debug!("Sending CAN frame: ID=0x{:X}, len={}", id, data.len());
 
-            socket
-                .write_frame(frame)?
+            stream
+                .send_frame(&frame)
                 .await
                 .with_context(|| format!("Failed to send CAN frame with ID 0x{:X}", id))?;
 
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Not connected to CAN interface"))
+            Err(anyhow::anyhow!("Not connected to SLCAN adapter"))
         }
     }
 }

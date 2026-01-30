@@ -1,9 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::can::{
-    CalibrationStatus, CanInterface, CanManager, MotorStatus, UsbCanDevice, VoltageStatus,
-};
+use crate::can::{CalibrationStatus, CanManager, MotorStatus, SerialPortInfo, VoltageStatus};
 
 /// Connection state
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -325,12 +323,10 @@ pub struct AppState {
     pub can_manager: Arc<Mutex<CanManager>>,
     /// Connection state
     pub connection_state: ConnectionState,
-    /// Selected CAN interface
-    pub interface: String,
-    /// Available CAN interfaces (detected)
-    pub available_interfaces: Vec<CanInterface>,
-    /// Available USB-CAN devices (detected)
-    pub available_usb_devices: Vec<UsbCanDevice>,
+    /// Selected serial port for SLCAN connection
+    pub selected_port: String,
+    /// Available serial ports (detected)
+    pub available_ports: Vec<SerialPortInfo>,
     /// Motor status
     pub motor_status: MotorStatus,
     /// Voltage status
@@ -352,9 +348,8 @@ impl Default for AppState {
         Self {
             can_manager: Arc::new(Mutex::new(CanManager::new())),
             connection_state: ConnectionState::Disconnected,
-            interface: "can0".to_string(),
-            available_interfaces: Vec::new(),
-            available_usb_devices: Vec::new(),
+            selected_port: String::new(),
+            available_ports: Vec::new(),
             motor_status: MotorStatus::default(),
             voltage_status: VoltageStatus::default(),
             settings: UserSettings::default(),
