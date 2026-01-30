@@ -1,3 +1,6 @@
+// Allow dead code for deprecated legacy methods
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -9,6 +12,8 @@ use tracing::{debug, info};
 use g4_driver_protocol::{
     self as protocol, can_ids, CalibrationStatus, MotorStatus, VoltageStatus,
 };
+
+use super::commands::MotorCommand;
 
 /// CAN Manager for handling CAN communication
 pub struct CanManager {
@@ -61,274 +66,366 @@ impl CanManager {
         &self.interface_name
     }
 
-    /// Send speed command
+    // ========================================================================
+    // New Unified API
+    // ========================================================================
+
+    /// Send a motor command using the unified API
     ///
-    /// # Arguments
-    /// * `speed_rpm` - Target speed in RPM
+    /// # Example
+    /// ```ignore
+    /// mgr.send(MotorCommand::Speed(1000.0)).await?;
+    /// mgr.send(MotorCommand::PiGains { kp: 0.5, ki: 0.05 }).await?;
+    /// mgr.send(MotorCommand::Enable(true)).await?;
+    /// ```
+    pub async fn send(&self, cmd: MotorCommand) -> Result<()> {
+        let id = cmd.can_id();
+        let data = cmd.encode();
+        debug!("Sending command {:?}", cmd);
+        self.send_frame(id, &data).await
+    }
+
+    // ========================================================================
+    // Legacy API (deprecated - use send() instead)
+    // ========================================================================
+
+    /// Send speed command
+    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::Speed(rpm)) instead")]
     pub async fn send_speed_command(&self, speed_rpm: f32) -> Result<()> {
-        let data = protocol::encode_speed_command(speed_rpm);
-        self.send_frame(can_ids::SPEED_CMD, &data).await
+        self.send(MotorCommand::Speed(speed_rpm)).await
     }
 
     /// Send PI gains
-    ///
-    /// # Arguments
-    /// * `kp` - Proportional gain
-    /// * `ki` - Integral gain
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::PiGains { kp, ki }) instead"
+    )]
     pub async fn send_pi_gains(&self, kp: f32, ki: f32) -> Result<()> {
-        let data = protocol::encode_pi_gains(kp, ki);
-        self.send_frame(can_ids::PI_GAINS, &data).await
+        self.send(MotorCommand::PiGains { kp, ki }).await
     }
 
     /// Send motor enable command
-    ///
-    /// # Arguments
-    /// * `enable` - Motor enable flag
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::Enable(enabled)) instead"
+    )]
     pub async fn send_enable_command(&self, enable: bool) -> Result<()> {
-        let data = protocol::encode_enable_command(enable);
-        self.send_frame(can_ids::ENABLE_CMD, &data).await
+        self.send(MotorCommand::Enable(enable)).await
     }
 
     /// Send emergency stop command
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::EmergencyStop) instead"
+    )]
     pub async fn send_emergency_stop(&self) -> Result<()> {
         info!("Sending emergency stop");
-        self.send_frame(can_ids::EMERGENCY_STOP, &[]).await
+        self.send(MotorCommand::EmergencyStop).await
     }
 
     /// Send save config command
+    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::SaveConfig) instead")]
     pub async fn send_save_config(&self) -> Result<()> {
         info!("Sending save config command");
-        self.send_frame(can_ids::SAVE_CONFIG, &[]).await
+        self.send(MotorCommand::SaveConfig).await
     }
 
     /// Send reload config command
+    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::ReloadConfig) instead")]
     pub async fn send_reload_config(&self) -> Result<()> {
         info!("Sending reload config command");
-        self.send_frame(can_ids::RELOAD_CONFIG, &[]).await
+        self.send(MotorCommand::ReloadConfig).await
     }
 
     /// Send reset config command
+    #[deprecated(since = "0.2.0", note = "Use send(MotorCommand::ResetConfig) instead")]
     pub async fn send_reset_config(&self) -> Result<()> {
         info!("Sending reset config command");
-        self.send_frame(can_ids::RESET_CONFIG, &[]).await
+        self.send(MotorCommand::ResetConfig).await
     }
 
-    // ========================================================================
-    // Motor Control Parameter Commands
-    // ========================================================================
-
     /// Send motor voltage parameters
-    ///
-    /// # Arguments
-    /// * `max_voltage` - Maximum voltage in volts
-    /// * `v_dc_bus` - DC bus voltage in volts
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::MotorVoltage { max_voltage, v_dc_bus }) instead"
+    )]
     pub async fn send_motor_voltage_params(&self, max_voltage: f32, v_dc_bus: f32) -> Result<()> {
-        let data = protocol::encode_motor_voltage_params(max_voltage, v_dc_bus);
-        self.send_frame(can_ids::MOTOR_VOLTAGE_PARAMS, &data).await
+        self.send(MotorCommand::MotorVoltage {
+            max_voltage,
+            v_dc_bus,
+        })
+        .await
     }
 
     /// Send motor basic parameters
-    ///
-    /// # Arguments
-    /// * `pole_pairs` - Number of pole pairs
-    /// * `max_duty` - Maximum duty cycle
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::MotorBasic { pole_pairs, max_duty }) instead"
+    )]
     pub async fn send_motor_basic_params(&self, pole_pairs: u8, max_duty: u16) -> Result<()> {
-        let data = protocol::encode_motor_basic_params(pole_pairs, max_duty);
-        self.send_frame(can_ids::MOTOR_BASIC_PARAMS, &data).await
+        self.send(MotorCommand::MotorBasic {
+            pole_pairs,
+            max_duty,
+        })
+        .await
     }
 
     /// Send hall sensor parameters
-    ///
-    /// # Arguments
-    /// * `speed_filter_alpha` - Speed filter alpha coefficient
-    /// * `hall_angle_offset` - Hall angle offset in radians
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::HallSensor { speed_filter_alpha, angle_offset }) instead"
+    )]
     pub async fn send_hall_sensor_params(
         &self,
         speed_filter_alpha: f32,
         hall_angle_offset: f32,
     ) -> Result<()> {
-        let data = protocol::encode_hall_sensor_params(speed_filter_alpha, hall_angle_offset);
-        self.send_frame(can_ids::HALL_SENSOR_PARAMS, &data).await
+        self.send(MotorCommand::HallSensor {
+            speed_filter_alpha,
+            angle_offset: hall_angle_offset,
+        })
+        .await
     }
 
     /// Send angle interpolation enable/disable
-    ///
-    /// # Arguments
-    /// * `enable` - Enable angle interpolation
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::AngleInterpolation(enabled)) instead"
+    )]
     pub async fn send_angle_interpolation(&self, enable: bool) -> Result<()> {
-        let data = protocol::encode_angle_interpolation(enable);
-        self.send_frame(can_ids::ANGLE_INTERPOLATION, &data).await
+        self.send(MotorCommand::AngleInterpolation(enable)).await
     }
 
-    // ========================================================================
-    // OpenLoop Parameter Commands
-    // ========================================================================
-
     /// Send openloop RPM parameters
-    ///
-    /// # Arguments
-    /// * `initial_rpm` - Initial RPM for openloop ramp-up
-    /// * `target_rpm` - Target RPM for switching to FOC
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::OpenLoopRpm { initial_rpm, target_rpm }) instead"
+    )]
     pub async fn send_openloop_rpm_params(&self, initial_rpm: f32, target_rpm: f32) -> Result<()> {
-        let data = protocol::encode_openloop_rpm_params(initial_rpm, target_rpm);
-        self.send_frame(can_ids::OPENLOOP_RPM_PARAMS, &data).await
+        self.send(MotorCommand::OpenLoopRpm {
+            initial_rpm,
+            target_rpm,
+        })
+        .await
     }
 
     /// Send openloop acceleration and duty parameters
-    ///
-    /// # Arguments
-    /// * `acceleration` - Acceleration in RPM/s
-    /// * `duty_ratio` - Duty ratio (0-100)
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::OpenLoopAccelDuty { acceleration, duty_ratio }) instead"
+    )]
     pub async fn send_openloop_accel_duty_params(
         &self,
         acceleration: f32,
         duty_ratio: u16,
     ) -> Result<()> {
-        let data = protocol::encode_openloop_accel_duty_params(acceleration, duty_ratio);
-        self.send_frame(can_ids::OPENLOOP_ACCEL_DUTY_PARAMS, &data)
-            .await
+        self.send(MotorCommand::OpenLoopAccelDuty {
+            acceleration,
+            duty_ratio,
+        })
+        .await
     }
 
-    // ========================================================================
-    // PWM/CAN/Timing Configuration Commands
-    // ========================================================================
-
     /// Send PWM configuration
-    ///
-    /// # Arguments
-    /// * `frequency` - PWM frequency in Hz
-    /// * `dead_time` - Dead time value
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::PwmConfig { frequency, dead_time }) instead"
+    )]
     pub async fn send_pwm_config(&self, frequency: u32, dead_time: u16) -> Result<()> {
-        let data = protocol::encode_pwm_config(frequency, dead_time);
-        self.send_frame(can_ids::PWM_CONFIG, &data).await
+        self.send(MotorCommand::PwmConfig {
+            frequency,
+            dead_time,
+        })
+        .await
     }
 
     /// Send CAN configuration
-    ///
-    /// # Arguments
-    /// * `bitrate` - CAN bitrate in bps
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::CanConfig(bitrate)) instead"
+    )]
     pub async fn send_can_config(&self, bitrate: u32) -> Result<()> {
-        let data = protocol::encode_can_config(bitrate);
-        self.send_frame(can_ids::CAN_CONFIG, &data).await
+        self.send(MotorCommand::CanConfig(bitrate)).await
     }
 
     /// Send control timing configuration
-    ///
-    /// # Arguments
-    /// * `control_period_us` - Control period in microseconds
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::ControlTiming(period_us)) instead"
+    )]
     pub async fn send_control_timing(&self, control_period_us: u64) -> Result<()> {
-        let data = protocol::encode_control_timing(control_period_us);
-        self.send_frame(can_ids::CONTROL_TIMING, &data).await
+        self.send(MotorCommand::ControlTiming(control_period_us))
+            .await
     }
-
-    // ========================================================================
-    // Calibration Commands
-    // ========================================================================
 
     /// Send start calibration command
-    ///
-    /// # Arguments
-    /// * `torque` - Optional torque value (0-100). If None, uses default.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::StartCalibration { torque }) instead"
+    )]
     pub async fn send_start_calibration(&self, torque: Option<u8>) -> Result<()> {
         info!("Sending start calibration command");
-        let data = protocol::encode_start_calibration(torque);
-        self.send_frame(can_ids::START_CALIBRATION, &data).await
+        self.send(MotorCommand::StartCalibration { torque }).await
     }
 
-    // ========================================================================
-    // Extended Parameter Commands
-    // ========================================================================
-
     /// Send advance angle parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::AdvanceAngle { base_deg, max_deg }) instead"
+    )]
     pub async fn send_advance_angle_params(&self, base_deg: f32, max_deg: f32) -> Result<()> {
-        let data = protocol::encode_advance_angle_params(base_deg, max_deg);
-        self.send_frame(can_ids::ADVANCE_ANGLE_PARAMS, &data).await
+        self.send(MotorCommand::AdvanceAngle { base_deg, max_deg })
+            .await
     }
 
     /// Send advance angle speed range
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::AdvanceAngleSpeed { min_speed, max_speed }) instead"
+    )]
     pub async fn send_advance_angle_speed(&self, min_speed: f32, max_speed: f32) -> Result<()> {
-        let data = protocol::encode_advance_angle_speed(min_speed, max_speed);
-        self.send_frame(can_ids::ADVANCE_ANGLE_SPEED, &data).await
+        self.send(MotorCommand::AdvanceAngleSpeed {
+            min_speed,
+            max_speed,
+        })
+        .await
     }
 
     /// Send min voltage parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::MinVoltage { min_voltage, error_threshold }) instead"
+    )]
     pub async fn send_min_voltage_params(
         &self,
         min_voltage: f32,
         error_threshold: f32,
     ) -> Result<()> {
-        let data = protocol::encode_min_voltage_params(min_voltage, error_threshold);
-        self.send_frame(can_ids::MIN_VOLTAGE_PARAMS, &data).await
+        self.send(MotorCommand::MinVoltage {
+            min_voltage,
+            error_threshold,
+        })
+        .await
     }
 
     /// Send max speed acceleration
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::MaxSpeedAccel(accel)) instead"
+    )]
     pub async fn send_max_speed_accel(&self, max_accel: f32) -> Result<()> {
-        let data = protocol::encode_max_speed_accel(max_accel);
-        self.send_frame(can_ids::MAX_SPEED_ACCEL, &data).await
+        self.send(MotorCommand::MaxSpeedAccel(max_accel)).await
     }
 
     /// Send FOC stall detection parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::FocStall { speed_threshold, count_threshold }) instead"
+    )]
     pub async fn send_foc_stall_params(
         &self,
         speed_threshold: f32,
         count_threshold: u32,
     ) -> Result<()> {
-        let data = protocol::encode_foc_stall_params(speed_threshold, count_threshold);
-        self.send_frame(can_ids::FOC_STALL_PARAMS, &data).await
+        self.send(MotorCommand::FocStall {
+            speed_threshold,
+            count_threshold,
+        })
+        .await
     }
 
     /// Send openloop cycles parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::OpenLoopCycles { forced_cycles, min_cycles }) instead"
+    )]
     pub async fn send_openloop_cycles_params(
         &self,
         forced_cycles: u32,
         min_cycles: u32,
     ) -> Result<()> {
-        let data = protocol::encode_openloop_cycles_params(forced_cycles, min_cycles);
-        self.send_frame(can_ids::OPENLOOP_CYCLES_PARAMS, &data)
-            .await
+        self.send(MotorCommand::OpenLoopCycles {
+            forced_cycles,
+            min_cycles,
+        })
+        .await
     }
 
     /// Send dead time compensation parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::DeadTimeComp { enabled, dead_time_ns }) instead"
+    )]
     pub async fn send_dead_time_comp_params(&self, enabled: bool, dead_time_ns: f32) -> Result<()> {
-        let data = protocol::encode_dead_time_comp_params(enabled, dead_time_ns);
-        self.send_frame(can_ids::DEAD_TIME_COMP_PARAMS, &data).await
+        self.send(MotorCommand::DeadTimeComp {
+            enabled,
+            dead_time_ns,
+        })
+        .await
     }
 
     /// Send flux weakening enable and min speed
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::FluxWeakeningEnable { enabled, min_speed }) instead"
+    )]
     pub async fn send_flux_weakening_enable(&self, enabled: bool, min_speed: f32) -> Result<()> {
-        let data = protocol::encode_flux_weakening_enable(enabled, min_speed);
-        self.send_frame(can_ids::FLUX_WEAKENING_ENABLE, &data).await
+        self.send(MotorCommand::FluxWeakeningEnable { enabled, min_speed })
+            .await
     }
 
     /// Send flux weakening parameters
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::FluxWeakeningParams { max_speed, max_ratio }) instead"
+    )]
     pub async fn send_flux_weakening_params(&self, max_speed: f32, max_ratio: f32) -> Result<()> {
-        let data = protocol::encode_flux_weakening_params(max_speed, max_ratio);
-        self.send_frame(can_ids::FLUX_WEAKENING_PARAMS, &data).await
+        self.send(MotorCommand::FluxWeakeningParams {
+            max_speed,
+            max_ratio,
+        })
+        .await
     }
 
     /// Send flux weakening Vd rate limit
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::FluxWeakeningVd(rate_limit)) instead"
+    )]
     pub async fn send_flux_weakening_vd(&self, vd_rate_limit: f32) -> Result<()> {
-        let data = protocol::encode_flux_weakening_vd(vd_rate_limit);
-        self.send_frame(can_ids::FLUX_WEAKENING_VD, &data).await
+        self.send(MotorCommand::FluxWeakeningVd(vd_rate_limit))
+            .await
     }
 
     /// Send voltage monitor thresholds
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::VoltageMonitorThresholds { overvoltage, undervoltage }) instead"
+    )]
     pub async fn send_voltage_monitor_thresholds(
         &self,
         overvoltage: f32,
         undervoltage: f32,
     ) -> Result<()> {
-        let data = protocol::encode_voltage_monitor_thresholds(overvoltage, undervoltage);
-        self.send_frame(can_ids::VOLTAGE_MONITOR_THRESHOLDS, &data)
-            .await
+        self.send(MotorCommand::VoltageMonitorThresholds {
+            overvoltage,
+            undervoltage,
+        })
+        .await
     }
 
     /// Send voltage monitor filter alpha
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use send(MotorCommand::VoltageMonitorFilter(alpha)) instead"
+    )]
     pub async fn send_voltage_monitor_filter(&self, alpha: f32) -> Result<()> {
-        let data = protocol::encode_voltage_monitor_filter(alpha);
-        self.send_frame(can_ids::VOLTAGE_MONITOR_FILTER, &data)
-            .await
+        self.send(MotorCommand::VoltageMonitorFilter(alpha)).await
     }
+
+    // ========================================================================
+    // Receive Methods (not deprecated)
+    // ========================================================================
 
     /// Receive next CAN frame with timeout
     ///
@@ -396,6 +493,10 @@ impl CanManager {
             None
         }
     }
+
+    // ========================================================================
+    // Internal Methods
+    // ========================================================================
 
     /// Send a CAN frame
     ///

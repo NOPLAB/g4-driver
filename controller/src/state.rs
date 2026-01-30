@@ -15,19 +15,28 @@ pub enum ConnectionState {
     Error(String),
 }
 
-/// User settings (matches firmware StoredConfig)
+// ============================================================================
+// Settings Sub-structures
+// ============================================================================
+
+/// PI controller settings
 #[derive(Debug, Clone)]
-pub struct UserSettings {
-    /// Target speed in RPM
-    pub target_speed: f32,
+pub struct PiSettings {
     /// Proportional gain
     pub kp: f32,
     /// Integral gain
     pub ki: f32,
-    /// Motor enable flag
-    pub motor_enabled: bool,
+}
 
-    // === Motor Control Parameters ===
+impl Default for PiSettings {
+    fn default() -> Self {
+        Self { kp: 0.5, ki: 0.05 }
+    }
+}
+
+/// Motor control settings
+#[derive(Debug, Clone)]
+pub struct MotorSettings {
     /// Maximum voltage [V]
     pub max_voltage: f32,
     /// DC bus voltage [V]
@@ -36,161 +45,275 @@ pub struct UserSettings {
     pub pole_pairs: u8,
     /// Maximum duty cycle
     pub max_duty: u16,
-    /// Hall sensor speed filter alpha
+}
+
+impl Default for MotorSettings {
+    fn default() -> Self {
+        Self {
+            max_voltage: 24.0,
+            v_dc_bus: 24.0,
+            pole_pairs: 6,
+            max_duty: 100,
+        }
+    }
+}
+
+/// Hall sensor settings
+#[derive(Debug, Clone)]
+pub struct HallSensorSettings {
+    /// Speed filter alpha coefficient
     pub speed_filter_alpha: f32,
     /// Hall sensor angle offset [rad]
-    pub hall_angle_offset: f32,
+    pub angle_offset: f32,
     /// Enable angle interpolation
-    pub enable_angle_interpolation: bool,
+    pub enable_interpolation: bool,
+}
 
-    // === OpenLoop Parameters ===
-    /// OpenLoop initial RPM
-    pub openloop_initial_rpm: f32,
-    /// OpenLoop target RPM
-    pub openloop_target_rpm: f32,
-    /// OpenLoop acceleration [RPM/s]
-    pub openloop_acceleration: f32,
-    /// OpenLoop duty ratio (0-100)
-    pub openloop_duty_ratio: u16,
+impl Default for HallSensorSettings {
+    fn default() -> Self {
+        Self {
+            speed_filter_alpha: 0.1,
+            angle_offset: 0.0,
+            enable_interpolation: true,
+        }
+    }
+}
 
-    // === PWM Configuration ===
-    /// PWM frequency [Hz]
-    pub pwm_frequency: u32,
-    /// PWM dead time
-    pub pwm_dead_time: u16,
-
-    // === CAN Configuration ===
-    /// CAN bitrate [bps]
-    pub can_bitrate: u32,
-
-    // === Control Timing ===
-    /// Control period [μs]
-    pub control_period_us: u64,
-
-    // === Advance Angle Parameters ===
-    /// Base advance angle [degrees]
-    pub advance_base_deg: f32,
-    /// Maximum advance angle [degrees]
-    pub advance_max_deg: f32,
-    /// Minimum speed for advance [RPM]
-    pub advance_min_speed: f32,
-    /// Maximum speed for advance [RPM]
-    pub advance_max_speed: f32,
-
-    // === Min Voltage Parameters ===
-    /// Minimum output voltage [V]
-    pub min_voltage: f32,
-    /// Min voltage error threshold [RPM]
-    pub min_voltage_error_threshold: f32,
-    /// Max speed acceleration [RPM/s]
-    pub max_speed_acceleration: f32,
-
-    // === FOC Stall Detection ===
-    /// FOC stall speed threshold [RPM]
-    pub foc_stall_speed_threshold: f32,
-    /// FOC stall count threshold
-    pub foc_stall_count_threshold: u32,
-
-    // === OpenLoop Cycles ===
+/// OpenLoop startup settings
+#[derive(Debug, Clone)]
+pub struct OpenLoopSettings {
+    /// Initial RPM for ramp-up
+    pub initial_rpm: f32,
+    /// Target RPM for FOC transition
+    pub target_rpm: f32,
+    /// Acceleration [RPM/s]
+    pub acceleration: f32,
+    /// Duty ratio (0-100)
+    pub duty_ratio: u16,
     /// Forced commutation cycles
     pub forced_commutation_cycles: u32,
     /// Min cycles before FOC transition
     pub min_cycles_before_foc: u32,
+}
 
-    // === Dead Time Compensation ===
-    /// Dead time compensation enabled
-    pub dead_time_comp_enabled: bool,
+impl Default for OpenLoopSettings {
+    fn default() -> Self {
+        Self {
+            initial_rpm: 100.0,
+            target_rpm: 500.0,
+            acceleration: 100.0,
+            duty_ratio: 50,
+            forced_commutation_cycles: 10000,
+            min_cycles_before_foc: 10000,
+        }
+    }
+}
+
+/// Advance angle settings
+#[derive(Debug, Clone)]
+pub struct AdvanceAngleSettings {
+    /// Base advance angle [degrees]
+    pub base_deg: f32,
+    /// Maximum advance angle [degrees]
+    pub max_deg: f32,
+    /// Minimum speed for advance [RPM]
+    pub min_speed: f32,
+    /// Maximum speed for advance [RPM]
+    pub max_speed: f32,
+}
+
+impl Default for AdvanceAngleSettings {
+    fn default() -> Self {
+        Self {
+            base_deg: 10.0,
+            max_deg: 30.0,
+            min_speed: 100.0,
+            max_speed: 3000.0,
+        }
+    }
+}
+
+/// Minimum voltage settings
+#[derive(Debug, Clone)]
+pub struct MinVoltageSettings {
+    /// Minimum output voltage [V]
+    pub voltage: f32,
+    /// Error threshold [RPM]
+    pub error_threshold: f32,
+    /// Max speed acceleration [RPM/s]
+    pub max_speed_acceleration: f32,
+}
+
+impl Default for MinVoltageSettings {
+    fn default() -> Self {
+        Self {
+            voltage: 2.0,
+            error_threshold: 2.0,
+            max_speed_acceleration: 100.0,
+        }
+    }
+}
+
+/// FOC stall detection settings
+#[derive(Debug, Clone)]
+pub struct FocStallSettings {
+    /// Speed threshold [RPM]
+    pub speed_threshold: f32,
+    /// Count threshold
+    pub count_threshold: u32,
+}
+
+impl Default for FocStallSettings {
+    fn default() -> Self {
+        Self {
+            speed_threshold: 50.0,
+            count_threshold: 1000,
+        }
+    }
+}
+
+/// Dead time compensation settings
+#[derive(Debug, Clone)]
+pub struct DeadTimeCompSettings {
+    /// Enabled flag
+    pub enabled: bool,
     /// Dead time [ns]
     pub dead_time_ns: f32,
+}
 
-    // === Flux Weakening ===
-    /// Flux weakening enabled
-    pub flux_weakening_enabled: bool,
-    /// Flux weakening min speed [RPM]
-    pub flux_weakening_min_speed: f32,
-    /// Flux weakening max speed [RPM]
-    pub flux_weakening_max_speed: f32,
-    /// Flux weakening max ratio (0-1)
-    pub flux_weakening_max_ratio: f32,
-    /// Flux weakening Vd rate limit [V/s]
-    pub flux_weakening_vd_rate_limit: f32,
+impl Default for DeadTimeCompSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dead_time_ns: 100.0,
+        }
+    }
+}
 
-    // === Voltage Monitor ===
+/// Flux weakening settings
+#[derive(Debug, Clone)]
+pub struct FluxWeakeningSettings {
+    /// Enabled flag
+    pub enabled: bool,
+    /// Min speed [RPM]
+    pub min_speed: f32,
+    /// Max speed [RPM]
+    pub max_speed: f32,
+    /// Max ratio (0-1)
+    pub max_ratio: f32,
+    /// Vd rate limit [V/s]
+    pub vd_rate_limit: f32,
+}
+
+impl Default for FluxWeakeningSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_speed: 2000.0,
+            max_speed: 4000.0,
+            max_ratio: 0.5,
+            vd_rate_limit: 100.0,
+        }
+    }
+}
+
+/// Voltage monitor settings
+#[derive(Debug, Clone)]
+pub struct VoltageMonitorSettings {
     /// Overvoltage threshold [V]
-    pub voltage_overvoltage_threshold: f32,
+    pub overvoltage_threshold: f32,
     /// Undervoltage threshold [V]
-    pub voltage_undervoltage_threshold: f32,
-    /// Voltage filter alpha
-    pub voltage_filter_alpha: f32,
+    pub undervoltage_threshold: f32,
+    /// Filter alpha
+    pub filter_alpha: f32,
+}
+
+impl Default for VoltageMonitorSettings {
+    fn default() -> Self {
+        Self {
+            overvoltage_threshold: 30.0,
+            undervoltage_threshold: 10.0,
+            filter_alpha: 0.1,
+        }
+    }
+}
+
+/// Hardware configuration settings
+#[derive(Debug, Clone)]
+pub struct HardwareSettings {
+    /// PWM frequency [Hz]
+    pub pwm_frequency: u32,
+    /// PWM dead time
+    pub pwm_dead_time: u16,
+    /// CAN bitrate [bps]
+    pub can_bitrate: u32,
+    /// Control period [us]
+    pub control_period_us: u64,
+}
+
+impl Default for HardwareSettings {
+    fn default() -> Self {
+        Self {
+            pwm_frequency: 50000,
+            pwm_dead_time: 100,
+            can_bitrate: 250000,
+            control_period_us: 400,
+        }
+    }
+}
+
+// ============================================================================
+// Main UserSettings structure
+// ============================================================================
+
+/// User settings (matches firmware StoredConfig)
+#[derive(Debug, Clone)]
+pub struct UserSettings {
+    /// Target speed in RPM
+    pub target_speed: f32,
+    /// Motor enable flag
+    pub motor_enabled: bool,
+
+    /// PI controller settings
+    pub pi: PiSettings,
+    /// Motor control settings
+    pub motor: MotorSettings,
+    /// Hall sensor settings
+    pub hall_sensor: HallSensorSettings,
+    /// OpenLoop settings
+    pub openloop: OpenLoopSettings,
+    /// Advance angle settings
+    pub advance_angle: AdvanceAngleSettings,
+    /// Minimum voltage settings
+    pub min_voltage: MinVoltageSettings,
+    /// FOC stall detection settings
+    pub foc_stall: FocStallSettings,
+    /// Dead time compensation settings
+    pub dead_time_comp: DeadTimeCompSettings,
+    /// Flux weakening settings
+    pub flux_weakening: FluxWeakeningSettings,
+    /// Voltage monitor settings
+    pub voltage_monitor: VoltageMonitorSettings,
+    /// Hardware settings
+    pub hardware: HardwareSettings,
 }
 
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
             target_speed: 0.0,
-            kp: 0.5,
-            ki: 0.05,
             motor_enabled: false,
-
-            // Motor Control defaults (from firmware config.rs)
-            max_voltage: 24.0,
-            v_dc_bus: 24.0,
-            pole_pairs: 6,
-            max_duty: 100,
-            speed_filter_alpha: 0.1,
-            hall_angle_offset: 0.0,
-            enable_angle_interpolation: true,
-
-            // OpenLoop defaults
-            openloop_initial_rpm: 100.0,
-            openloop_target_rpm: 500.0,
-            openloop_acceleration: 100.0,
-            openloop_duty_ratio: 50,
-
-            // PWM defaults
-            pwm_frequency: 50000,
-            pwm_dead_time: 100,
-
-            // CAN defaults
-            can_bitrate: 250000,
-
-            // Control timing defaults
-            control_period_us: 400,
-
-            // Advance angle defaults
-            advance_base_deg: 10.0,
-            advance_max_deg: 30.0,
-            advance_min_speed: 100.0,
-            advance_max_speed: 3000.0,
-
-            // Min voltage defaults
-            min_voltage: 2.0,
-            min_voltage_error_threshold: 2.0,
-            max_speed_acceleration: 100.0,
-
-            // FOC stall defaults
-            foc_stall_speed_threshold: 50.0,
-            foc_stall_count_threshold: 1000,
-
-            // OpenLoop cycles defaults
-            forced_commutation_cycles: 10000,
-            min_cycles_before_foc: 10000,
-
-            // Dead time compensation defaults
-            dead_time_comp_enabled: false,
-            dead_time_ns: 100.0,
-
-            // Flux weakening defaults
-            flux_weakening_enabled: false,
-            flux_weakening_min_speed: 2000.0,
-            flux_weakening_max_speed: 4000.0,
-            flux_weakening_max_ratio: 0.5,
-            flux_weakening_vd_rate_limit: 100.0,
-
-            // Voltage monitor defaults
-            voltage_overvoltage_threshold: 30.0,
-            voltage_undervoltage_threshold: 10.0,
-            voltage_filter_alpha: 0.1,
+            pi: PiSettings::default(),
+            motor: MotorSettings::default(),
+            hall_sensor: HallSensorSettings::default(),
+            openloop: OpenLoopSettings::default(),
+            advance_angle: AdvanceAngleSettings::default(),
+            min_voltage: MinVoltageSettings::default(),
+            foc_stall: FocStallSettings::default(),
+            dead_time_comp: DeadTimeCompSettings::default(),
+            flux_weakening: FluxWeakeningSettings::default(),
+            voltage_monitor: VoltageMonitorSettings::default(),
+            hardware: HardwareSettings::default(),
         }
     }
 }

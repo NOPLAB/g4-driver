@@ -5,7 +5,19 @@ use super::components::{
     Button, ButtonVariant, Card, EmergencyStopButton, F32InputInline, SectionHeader, StatusCard,
     StatusCardColor, ToggleSwitch, WarningBanner,
 };
+use crate::can::commands::MotorCommand;
 use crate::state::{AppState, ConnectionState};
+
+/// Helper to send a command asynchronously
+fn send_command(app_state: Signal<AppState>, cmd: MotorCommand) {
+    spawn(async move {
+        let mgr = app_state.read().can_manager.clone();
+        let result = mgr.lock().await.send(cmd).await;
+        if let Err(e) = result {
+            error!("Failed to send command: {}", e);
+        }
+    });
+}
 
 #[component]
 pub fn ControlPanel() -> Element {
@@ -30,14 +42,7 @@ pub fn ControlPanel() -> Element {
     let on_speed_apply = move |_| {
         let speed = app_state.read().settings.target_speed;
         info!("Applying speed: {} RPM", speed);
-
-        spawn(async move {
-            let manager = app_state.read().can_manager.clone();
-            match manager.lock().await.send_speed_command(speed).await {
-                Ok(_) => info!("Speed command sent successfully"),
-                Err(e) => error!("Failed to send speed command: {}", e),
-            };
-        });
+        send_command(app_state, MotorCommand::Speed(speed));
     };
 
     // Motor enable toggle handler
@@ -47,14 +52,7 @@ pub fn ControlPanel() -> Element {
         app_state.write().settings.motor_enabled = new_enabled;
 
         info!("Motor enable: {}", new_enabled);
-
-        spawn(async move {
-            let manager = app_state.read().can_manager.clone();
-            match manager.lock().await.send_enable_command(new_enabled).await {
-                Ok(_) => info!("Enable command sent successfully"),
-                Err(e) => error!("Failed to send enable command: {}", e),
-            };
-        });
+        send_command(app_state, MotorCommand::Enable(new_enabled));
     };
 
     // Emergency stop handler
@@ -62,14 +60,7 @@ pub fn ControlPanel() -> Element {
         info!("EMERGENCY STOP");
         app_state.write().settings.target_speed = 0.0;
         app_state.write().settings.motor_enabled = false;
-
-        spawn(async move {
-            let manager = app_state.read().can_manager.clone();
-            match manager.lock().await.send_emergency_stop().await {
-                Ok(_) => info!("Emergency stop sent successfully"),
-                Err(e) => error!("Failed to send emergency stop: {}", e),
-            };
-        });
+        send_command(app_state, MotorCommand::EmergencyStop);
     };
 
     rsx! {
@@ -182,7 +173,7 @@ pub fn ControlPanel() -> Element {
                     // Electrical angle
                     StatusCard {
                         label: "Electrical Angle".to_string(),
-                        value: format!("{:.1}°", state.motor_status.electrical_angle * 180.0 / std::f32::consts::PI),
+                        value: format!("{:.1} deg", state.motor_status.electrical_angle * 180.0 / std::f32::consts::PI),
                         color: StatusCardColor::Blue
                     }
 
@@ -197,11 +188,11 @@ pub fn ControlPanel() -> Element {
                     StatusCard {
                         label: "Voltage Status".to_string(),
                         value: if state.voltage_status.overvoltage {
-                            "⚠ OVERVOLTAGE".to_string()
+                            "OVERVOLTAGE".to_string()
                         } else if state.voltage_status.undervoltage {
-                            "⚠ UNDERVOLTAGE".to_string()
+                            "UNDERVOLTAGE".to_string()
                         } else {
-                            "✓ Normal".to_string()
+                            "Normal".to_string()
                         },
                         color: StatusCardColor::Yellow
                     }
