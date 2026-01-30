@@ -27,6 +27,9 @@ use g4_driver_protocol::{
 /// CAN送信タイムアウト（ms）
 const CAN_TX_TIMEOUT_MS: u64 = 50;
 
+/// RXエラー抑制しきい値（この回数以上連続エラーでログ抑制）
+const RX_ERROR_SUPPRESS_THRESHOLD: u32 = 5;
+
 /// CAN通信タスク - モーター制御コマンド処理とステータス送信
 #[embassy_executor::task]
 pub async fn can_task(
@@ -64,6 +67,9 @@ pub async fn can_task(
     // ステータス送信用タイマー（100ms周期）
     let mut status_ticker = Ticker::every(Duration::from_millis(100));
 
+    // RXエラー連続カウンタ
+    let mut rx_error_count: u32 = 0;
+
     loop {
         // CANフレーム受信とステータス送信を並行処理
         embassy_futures::select::select(
@@ -71,6 +77,9 @@ pub async fn can_task(
                 // CANフレーム受信処理
                 match rx.read().await {
                     Ok(envelope) => {
+                        // 受信成功時はエラーカウンタをリセット
+                        rx_error_count = 0;
+
                         let frame = envelope.frame;
                         let data = frame.data();
                         let header = frame.header();
@@ -414,10 +423,18 @@ pub async fn can_task(
                         }
                     }
                     Err(e) => {
-                        // CANバス未接続時はエラーログを抑制
-                        if status_enabled {
+                        rx_error_count = rx_error_count.saturating_add(1);
+
+                        // 連続エラー時はログを抑制
+                        if rx_error_count == RX_ERROR_SUPPRESS_THRESHOLD {
+                            warn!(
+                                "CAN RX error: {:?} (suppressing further errors)",
+                                e
+                            );
+                        } else if rx_error_count < RX_ERROR_SUPPRESS_THRESHOLD {
                             warn!("CAN RX error: {:?}", e);
                         }
+                        // RX_ERROR_SUPPRESS_THRESHOLD以上は何も出力しない
                     }
                 }
             },
