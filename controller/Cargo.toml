@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 g4-driver-protocol = { path = "../protocol" }
-dioxus = { version = "0.6", features = ["desktop"] }
+dioxus = { version = "0.7", features = ["desktop"] }
 tokio = { version = "1.41", features = ["full"] }
 tokio-socketcan = "0.3"
 futures = "0.3"
