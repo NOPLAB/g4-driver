@@ -7,7 +7,7 @@ use embassy_stm32::{
     crc::Crc,
     flash::{Blocking, Flash},
 };
-use embassy_time::{with_timeout, Duration, Ticker};
+use embassy_time::{with_timeout, Duration, Ticker, Timer};
 use embedded_can::Id;
 
 use crate::config;
@@ -434,7 +434,9 @@ pub async fn can_task(
                         } else if rx_error_count < RX_ERROR_SUPPRESS_THRESHOLD {
                             warn!("CAN RX error: {:?}", e);
                         }
-                        // RX_ERROR_SUPPRESS_THRESHOLD以上は何も出力しない
+
+                        // エラー時は少し待機してビジーループを防止
+                        Timer::after(Duration::from_millis(100)).await;
                     }
                 }
             },
