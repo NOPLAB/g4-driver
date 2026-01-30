@@ -35,7 +35,7 @@ pub fn ControlPanel() -> Element {
 
     // Speed input change handler
     let on_speed_input_change = move |value: f32| {
-        app_state.write().settings.target_speed = value.clamp(0.0, 3000.0);
+        app_state.write().settings.target_speed = value.clamp(-3000.0, 3000.0);
     };
 
     // Speed apply button handler
@@ -92,7 +92,7 @@ pub fn ControlPanel() -> Element {
                         }
                         input {
                             r#type: "range",
-                            min: 0,
+                            min: -3000,
                             max: 3000,
                             step: 10,
                             value: "{state.settings.target_speed}",

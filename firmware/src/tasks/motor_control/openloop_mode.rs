@@ -9,7 +9,7 @@ use crate::config::openloop::{
 };
 use crate::config::voltage;
 use crate::fmt::*;
-use crate::state::{ControlMode, RUNTIME};
+use crate::state::{self, ControlMode, RUNTIME};
 
 use crate::hall_tim;
 
@@ -57,6 +57,11 @@ impl OpenLoopMode {
         let pwm_max = ctx.motor_driver.max_duty();
         let is_recovery = RUNTIME.openloop.is_recovery();
 
+        // 目標速度を取得して回転方向を決定
+        let foc_params = state::get_foc_input_params().await;
+        let is_reverse = foc_params.target_speed < 0.0;
+        openloop.set_reverse(is_reverse);
+
         // フェーズ別処理
         let (du, dv, dw, phase) = if exec_count < FORCED_COMMUTATION_CYCLES {
             // 強制転流フェーズ（従来の6ステップ駆動）
@@ -73,7 +78,9 @@ impl OpenLoopMode {
             let (electrical_angle, _speed_rpm, _hall) = hall_sensor.update(ctx.dt);
 
             // 固定電圧指令（OpenLoopのDuty相当）
-            let vq_cmd = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
+            // 逆回転時は負のVqを使用
+            let vq_base = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
+            let vq_cmd = if is_reverse { -vq_base } else { vq_base };
             let vd_cmd = 0.0;
 
             // Park逆変換 → SVPWM（FOCと同じ計算）
@@ -85,7 +92,15 @@ impl OpenLoopMode {
         };
 
         ctx.motor_driver.set_duty_uvw(du, dv, dw);
-        RUNTIME.status.update(openloop.get_current_rpm(), 0.0);
+
+        // ステータス更新（逆回転時は負の速度として報告）
+        let current_rpm = openloop.get_current_rpm();
+        let signed_rpm = if is_reverse {
+            -current_rpm
+        } else {
+            current_rpm
+        };
+        RUNTIME.status.update(signed_rpm, 0.0);
 
         // 速度計算
         let period = hall_tim::get_period_cycles();

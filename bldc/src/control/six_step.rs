@@ -45,6 +45,8 @@ pub struct SixStepController {
     duty_ratio: u16,
     /// Number of pole pairs
     pole_pairs: u8,
+    /// Reverse direction flag
+    reverse: bool,
 }
 
 impl SixStepController {
@@ -85,7 +87,21 @@ impl SixStepController {
             elapsed_time: 0.0,
             duty_ratio,
             pole_pairs,
+            reverse: false,
         }
+    }
+
+    /// Set the rotation direction
+    ///
+    /// # Arguments
+    /// * `reverse` - If true, rotate in reverse direction
+    pub fn set_reverse(&mut self, reverse: bool) {
+        self.reverse = reverse;
+    }
+
+    /// Get the current rotation direction
+    pub fn is_reverse(&self) -> bool {
+        self.reverse
     }
 
     /// Get the state for a specific step
@@ -168,7 +184,19 @@ impl SixStepController {
         // Check if it's time to switch steps
         if self.elapsed_time >= self.step_period {
             self.elapsed_time = 0.0;
-            self.current_step = (self.current_step + 1) % 6;
+
+            // Step progression depends on direction
+            if self.reverse {
+                // Reverse: decrement step (5 -> 4 -> 3 -> 2 -> 1 -> 0 -> 5 ...)
+                self.current_step = if self.current_step == 0 {
+                    5
+                } else {
+                    self.current_step - 1
+                };
+            } else {
+                // Forward: increment step (0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0 ...)
+                self.current_step = (self.current_step + 1) % 6;
+            }
 
             // Accelerate (shorten step period)
             if self.step_period > self.min_step_period {

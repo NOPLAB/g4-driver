@@ -107,7 +107,7 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
 
     // 電気角と速度とHall状態を取得（TIM4ハードウェアベース）
     // Hall状態は1回だけ読み取り、再取得による競合を防止
-    let (hall_electrical_angle, speed_rpm, hall_state) = hall_sensor.update(dt);
+    let (hall_electrical_angle, speed_rpm_abs, hall_state) = hall_sensor.update(dt);
     let is_valid_hall = (1..=6).contains(&hall_state);
 
     // Hallセンサが無効な場合の処理
@@ -155,6 +155,14 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
         info!("PI gains updated: Kp={}, Ki={}", kp, ki);
     }
 
+    // 逆転対応：目標速度の符号に基づいてフィードバック速度の符号を推定
+    // Hallセンサーは回転方向を検出できないため、目標速度の符号を使用
+    let speed_rpm = if *ramped_target_speed < 0.0 {
+        -speed_rpm_abs
+    } else {
+        speed_rpm_abs
+    };
+
     // 速度ランプ（加速度制限）を適用
     let speed_error = target_speed - *ramped_target_speed;
     let max_delta_speed = speed::MAX_ACCELERATION * dt; // 1制御周期で変化可能な最大速度
@@ -184,22 +192,27 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
     }
 
     // 最小電圧適用（走行中の脱調防止）
-    // 目標速度 > 実測速度 の場合のみ最小電圧を適用
-    // 実測速度が目標を上回っている場合は適用しない（発振防止）
-    if *ramped_target_speed > speed_rpm + 10.0 {
+    // 目標速度と実測速度の差が大きい場合のみ最小電圧を適用
+    // 実測速度が目標に近い場合は適用しない（発振防止）
+    let speed_error = *ramped_target_speed - speed_rpm;
+    if speed_error > 10.0 {
+        // 正方向加速時：正の最小電圧
         vq_cmd = vq_cmd.max(voltage::MIN);
+    } else if speed_error < -10.0 {
+        // 逆方向加速時：負の最小電圧
+        vq_cmd = vq_cmd.min(-voltage::MIN);
     }
 
     // 電圧ベクトル制限（100%）
     let max_voltage = voltage::DEFAULT_DC_BUS * 1.0;
 
-    // 逆回転防止：Vqを正の値のみに制限（一方向回転）
-    let vq_cmd_positive = vq_cmd.max(0.0);
-    let (vd_limited, vq_limited) = limit_voltage(vd_cmd, vq_cmd_positive, max_voltage);
+    // 逆回転対応：Vqの符号を保持しながら電圧制限
+    let (vd_limited, vq_limited) = limit_voltage(vd_cmd, vq_cmd, max_voltage);
 
     // 電圧飽和検出：飽和状態が続くと脱調の原因になるためカウント
-    // 50%以上の飽和（vq_limitedがvq_cmd_positiveの半分以下）は危険な状態
-    let is_severe_saturation = vq_cmd_positive > 0.1 && (vq_limited / vq_cmd_positive) < 0.5;
+    // 50%以上の飽和（vq_limitedがvq_cmdの半分以下）は危険な状態
+    let vq_cmd_abs = vq_cmd.abs();
+    let is_severe_saturation = vq_cmd_abs > 0.1 && (vq_limited.abs() / vq_cmd_abs) < 0.5;
     if is_severe_saturation {
         RUNTIME.foc.increment_saturation();
     } else {
@@ -247,13 +260,18 @@ async fn execute_foc_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
 
     // 速度低下（脱落）検出
     // 目標速度が設定されているのに実測速度が閾値以下の場合をカウント
-    if *ramped_target_speed > foc_stall::SPEED_THRESHOLD && speed_rpm < foc_stall::SPEED_THRESHOLD {
+    // 逆回転対応：絶対値で判定
+    let target_speed_magnitude = ramped_target_speed.abs();
+    let speed_rpm_magnitude = speed_rpm.abs();
+    if target_speed_magnitude > foc_stall::SPEED_THRESHOLD
+        && speed_rpm_magnitude < foc_stall::SPEED_THRESHOLD
+    {
         let stall_count = RUNTIME.foc.increment_stall();
 
         if stall_count >= foc_stall::COUNT_THRESHOLD {
             warn!(
                 "[FOC] Stall detected: speed={} RPM < {} RPM for {}+ cycles, switching to OpenLoop",
-                speed_rpm,
+                speed_rpm_magnitude,
                 foc_stall::SPEED_THRESHOLD,
                 foc_stall::COUNT_THRESHOLD
             );
