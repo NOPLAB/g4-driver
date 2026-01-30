@@ -3,26 +3,29 @@
 //! モーター制御コマンドの受信とステータス送信を行います。
 
 use embassy_stm32::{
-    can,
+    can::{self, frame::Frame},
     crc::Crc,
     flash::{Blocking, Flash},
 };
-use embassy_time::{Duration, Ticker};
+use embassy_time::{with_timeout, Duration, Ticker};
 use embedded_can::Id;
 
 use crate::config;
 use crate::fmt::*;
 use crate::state::{self, MOTOR_STATE};
 use g4_driver_protocol::{
-    can_ids, parse_advance_angle_params, parse_advance_angle_speed, parse_angle_interpolation,
-    parse_can_config, parse_control_timing, parse_dead_time_comp_params, parse_enable_command,
-    parse_flux_weakening_enable, parse_flux_weakening_params, parse_flux_weakening_vd,
-    parse_foc_stall_params, parse_hall_sensor_params, parse_max_speed_accel,
-    parse_min_voltage_params, parse_motor_basic_params, parse_motor_voltage_params,
-    parse_openloop_accel_duty_params, parse_openloop_cycles_params, parse_openloop_rpm_params,
-    parse_pi_gains, parse_pwm_config, parse_speed_command, parse_voltage_monitor_filter,
-    parse_voltage_monitor_thresholds,
+    can_ids, encode_status, encode_voltage_status, parse_advance_angle_params,
+    parse_advance_angle_speed, parse_angle_interpolation, parse_can_config, parse_control_timing,
+    parse_dead_time_comp_params, parse_enable_command, parse_flux_weakening_enable,
+    parse_flux_weakening_params, parse_flux_weakening_vd, parse_foc_stall_params,
+    parse_hall_sensor_params, parse_max_speed_accel, parse_min_voltage_params,
+    parse_motor_basic_params, parse_motor_voltage_params, parse_openloop_accel_duty_params,
+    parse_openloop_cycles_params, parse_openloop_rpm_params, parse_pi_gains, parse_pwm_config,
+    parse_speed_command, parse_voltage_monitor_filter, parse_voltage_monitor_thresholds,
 };
+
+/// CAN送信タイムアウト（ms）
+const CAN_TX_TIMEOUT_MS: u64 = 50;
 
 /// CAN通信タスク - モーター制御コマンド処理とステータス送信
 #[embassy_executor::task]
@@ -31,9 +34,32 @@ pub async fn can_task(
     mut flash: Flash<'static, Blocking>,
     mut crc: Crc<'static>,
 ) {
-    let (_tx, mut rx, _properties) = can.split();
+    let (mut tx, mut rx, _properties) = can.split();
 
     info!("CAN motor control task started");
+
+    // 起動時にテストフレームを送信してCANバス接続を確認
+    let status_enabled = {
+        let test_data = encode_status(0.0, 0.0);
+        let test_frame = Frame::new_standard(can_ids::STATUS as u16, &test_data).unwrap();
+
+        info!("Testing CAN bus connection...");
+        match with_timeout(
+            Duration::from_millis(CAN_TX_TIMEOUT_MS),
+            tx.write(&test_frame),
+        )
+        .await
+        {
+            Ok(_) => {
+                info!("CAN bus connected - status broadcast enabled");
+                true
+            }
+            Err(_) => {
+                warn!("CAN bus not connected - status broadcast disabled");
+                false
+            }
+        }
+    };
 
     // ステータス送信用タイマー（100ms周期）
     let mut status_ticker = Ticker::every(Duration::from_millis(100));
@@ -393,8 +419,35 @@ pub async fn can_task(
                 }
             },
             async {
-                // ステータス送信（100ms周期）- 現在は無効化
+                // ステータス送信（100ms周期）
                 status_ticker.next().await;
+
+                if status_enabled {
+                    // モーターステータス送信（Atomic変数からロックフリーで取得）
+                    let (speed_rpm, electrical_angle) = state::get_motor_status_atomic();
+                    let status_data = encode_status(speed_rpm, electrical_angle);
+
+                    if let Ok(frame) =
+                        Frame::new_standard(can_ids::STATUS as u16, &status_data)
+                    {
+                        let _ = tx.write(&frame).await;
+                    }
+
+                    // 電圧ステータス送信
+                    let sys_ctx = state::system_context().await;
+                    let voltage_data = encode_voltage_status(
+                        sys_ctx.voltage_state.voltage,
+                        sys_ctx.voltage_state.overvoltage,
+                        sys_ctx.voltage_state.undervoltage,
+                    );
+                    drop(sys_ctx);
+
+                    if let Ok(frame) =
+                        Frame::new_standard(can_ids::VOLTAGE_STATUS as u16, &voltage_data)
+                    {
+                        let _ = tx.write(&frame).await;
+                    }
+                }
             },
         )
         .await;
