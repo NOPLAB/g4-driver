@@ -9,10 +9,10 @@ use bldc::control::{FocConfig, FocController, OpenLoopConfig, OpenLoopController
 use core::f32::consts::PI;
 
 use crate::adapters::HallSensorAdapter;
+use crate::board;
 use crate::config::{
     dead_time_compensation, flux_weakening, foc_stall, hall, motor, openloop, pwm, speed, voltage,
 };
-use crate::motor_driver;
 use crate::state::RUNTIME;
 
 /// モーター制御に必要な全リソース
@@ -75,8 +75,8 @@ impl ControllerResources {
             min_speed_for_foc: openloop::MIN_SPEED_FOR_FOC,
         });
 
-        // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
-        let calibration = MotorCalibration::new(motor::DEFAULT_POLE_PAIRS, 0.1);
+        // キャリブレーション初期化（トルクは state.rs の CalibrationParams で管理）
+        let calibration = MotorCalibration::new(motor::DEFAULT_POLE_PAIRS);
 
         Self {
             hall_sensor,
@@ -90,7 +90,7 @@ impl ControllerResources {
     fn reset_common(&mut self) {
         self.foc_controller.reset();
         self.hall_sensor.reset();
-        motor_driver::reset_state();
+        board::reset_state();
     }
 
     /// 全リソースをリセット（モーター停止時に呼び出し）

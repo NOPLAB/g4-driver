@@ -2,7 +2,7 @@
 //!
 //! 制御モード間の遷移ロジックとモードの共通インターフェースを定義します。
 
-use crate::motor_driver::MotorDriver;
+use crate::board::MotorDriver;
 use crate::state::ControlMode;
 
 use super::resources::ControllerResources;

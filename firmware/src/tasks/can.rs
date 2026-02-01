@@ -447,12 +447,52 @@ pub async fn can_task(
                 if status_enabled {
                     // モーターステータス送信（Atomic変数からロックフリーで取得）
                     let (speed_rpm, electrical_angle) = state::get_motor_status_atomic();
+
                     let status_data = encode_status(speed_rpm, electrical_angle);
 
+                    // デバッグ: 送信値とエンコード結果をログ出力（10回に1回）
+                    static DEBUG_CNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+                    let cnt = DEBUG_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    if cnt.is_multiple_of(10) {
+                        debug!(
+                            "[CAN TX] speed={}, angle={}, data={:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                            speed_rpm, electrical_angle,
+                            status_data[0], status_data[1], status_data[2], status_data[3],
+                            status_data[4], status_data[5], status_data[6], status_data[7]
+                        );
+                    }
+
+                    // テスト: 固定データを別のIDで送信
+                    let test_data: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
                     if let Ok(frame) =
-                        Frame::new_standard(can_ids::STATUS as u16, &status_data)
+                        Frame::new_standard(0x300u16, &test_data)
                     {
-                        let _ = tx.write(&frame).await;
+                        // デバッグ: フレームの内容を確認
+                        let frame_data = frame.data();
+                        if cnt.is_multiple_of(10) {
+                            debug!(
+                                "[CAN Frame] len={}, data={:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                                frame_data.len(),
+                                frame_data.first().copied().unwrap_or(0),
+                                frame_data.get(1).copied().unwrap_or(0),
+                                frame_data.get(2).copied().unwrap_or(0),
+                                frame_data.get(3).copied().unwrap_or(0),
+                                frame_data.get(4).copied().unwrap_or(0),
+                                frame_data.get(5).copied().unwrap_or(0),
+                                frame_data.get(6).copied().unwrap_or(0),
+                                frame_data.get(7).copied().unwrap_or(0),
+                            );
+                        }
+                        match tx.write(&frame).await {
+                            None => {
+                                if cnt.is_multiple_of(10) {
+                                    debug!("[CAN] Write OK");
+                                }
+                            }
+                            Some(_) => {
+                                warn!("[CAN] Write buffer full");
+                            }
+                        }
                     }
 
                     // 電圧ステータス送信

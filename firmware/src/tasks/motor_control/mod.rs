@@ -11,9 +11,9 @@ mod resources;
 
 use embassy_time::{Duration, Timer};
 
+use crate::board::MotorDriver;
 use crate::config::{control, motor, pwm};
 use crate::fmt::*;
-use crate::motor_driver::MotorDriver;
 use crate::state;
 use crate::state::ControlMode;
 

@@ -90,12 +90,11 @@ impl MotorCalibration {
     ///
     /// # Arguments
     /// * `pole_pairs` - Motor pole pairs
-    /// * `torque` - Calibration torque (0.0 to 1.0, recommended: 0.15 to 0.25)
-    pub fn new(pole_pairs: u8, torque: f32) -> Self {
+    pub fn new(pole_pairs: u8) -> Self {
         Self {
             state: CalibrationState::Init,
             pole_pairs,
-            torque: torque.clamp(0.1, 0.5), // Limit to 0.1 to 0.5 for safety
+            torque: 0.1, // Default torque, use set_torque() to change
             shaft_position_req: ShaftPosition::new(),
             shaft_position_act: ShaftPosition::new(),
             result: CalibrationResult::new(),
@@ -155,9 +154,8 @@ impl MotorCalibration {
     }
 
     /// Set torque
-    #[allow(dead_code)]
     pub fn set_torque(&mut self, torque: f32) {
-        self.torque = torque.clamp(0.1, 0.5);
+        self.torque = torque.clamp(0.01, 0.5);
     }
 
     // === State handlers ===
@@ -265,14 +263,14 @@ mod tests {
 
     #[test]
     fn test_calibration_new() {
-        let cal = MotorCalibration::new(6, 0.2);
+        let cal = MotorCalibration::new(6);
         assert_eq!(cal.get_state(), CalibrationState::Init);
         assert!(!cal.is_completed());
     }
 
     #[test]
     fn test_calibration_start() {
-        let mut cal = MotorCalibration::new(6, 0.2);
+        let mut cal = MotorCalibration::new(6);
         cal.start();
         assert_eq!(cal.get_state(), CalibrationState::Init);
         assert!(!cal.get_result().success);
@@ -280,16 +278,18 @@ mod tests {
 
     #[test]
     fn test_torque_clamping() {
-        let mut cal = MotorCalibration::new(6, 0.8); // 0.8 is too high
+        let mut cal = MotorCalibration::new(6);
+
+        cal.set_torque(0.8); // 0.8 is too high
         assert!(cal.torque <= 0.5);
 
-        cal.set_torque(0.05); // 0.05 is too low
-        assert!(cal.torque >= 0.1);
+        cal.set_torque(0.005); // 0.005 is too low
+        assert!(cal.torque >= 0.01);
     }
 
     #[test]
     fn test_init_transitions_to_find_direction() {
-        let mut cal = MotorCalibration::new(6, 0.2);
+        let mut cal = MotorCalibration::new(6);
         let hall_reader = MockHallReader { state: 1 };
         cal.start();
 

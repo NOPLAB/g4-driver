@@ -10,7 +10,7 @@ use crate::config::advance_angle::{
 };
 
 // Note: advance_angle config imports are used by HallConfig initialization
-use crate::motor_driver::{calculate_speed_rpm, get_hall_state, get_snapshot};
+use crate::board::{calculate_speed_rpm, get_hall_state, get_snapshot};
 
 /// Hall sensor adapter that combines TIM4 hardware with bldc processing
 pub struct HallSensorAdapter {

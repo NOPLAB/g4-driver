@@ -9,10 +9,17 @@
 
 use embassy_stm32::{
     peripherals,
-    timer::{complementary_pwm::ComplementaryPwm, Channel},
+    timer::{
+        complementary_pwm::{ComplementaryPwm, ComplementaryPwmPin},
+        low_level::CountingMode,
+        simple_pwm::PwmPin,
+        Channel,
+    },
+    Peri,
 };
 
-use crate::motor_driver::traits::{BootstrapChargeable, PwmDriver};
+use crate::board::traits::{BootstrapChargeable, PwmDriver};
+use crate::config;
 
 /// 3相モータードライバー
 ///
@@ -127,13 +134,15 @@ impl PwmDriver for MotorDriver {
 impl BootstrapChargeable for MotorDriver {
     /// 全ローサイドをON、ハイサイドをOFF
     ///
-    /// 補完PWMでDuty=max_dutyに設定すると：
-    /// - ハイサイド(INHx): OFF
-    /// - ローサイド(INLx): ON
+    /// Edge-aligned PWMでDuty=0に設定すると：
+    /// - メイン出力(INHx): Low → ハイサイドOFF
+    /// - 補完出力(INLx): High → ローサイドON
     ///
-    /// これによりブートストラップコンデンサが充電される
+    /// OUTxピンがGNDに接続され、ブートストラップコンデンサが
+    /// VCC→ブートストラップダイオード→BOOTxコンデンサ経路で充電される。
+    /// (STSPIN32G4 データシート Section 5.2.4.1 参照)
     fn set_all_low_side_on(&mut self) {
-        self.set_duty_uvw(self.max_duty, self.max_duty, self.max_duty);
+        self.set_duty_uvw(0, 0, 0);
         self.enable_all_channels();
     }
 
@@ -142,4 +151,53 @@ impl BootstrapChargeable for MotorDriver {
         self.set_duty_uvw(0, 0, 0);
         self.disable_all_channels();
     }
+}
+
+/// TIM1 PWMを初期化してMotorDriverを返す
+///
+/// # ピン配置
+/// - PE9/PE8: U相 (CH1/CH1N)
+/// - PE11/PE10: V相 (CH2/CH2N)
+/// - PE13/PE12: W相 (CH3/CH3N)
+pub fn init_motor_driver(
+    tim1: Peri<'static, peripherals::TIM1>,
+    pe9: Peri<'static, peripherals::PE9>,
+    pe8: Peri<'static, peripherals::PE8>,
+    pe11: Peri<'static, peripherals::PE11>,
+    pe10: Peri<'static, peripherals::PE10>,
+    pe13: Peri<'static, peripherals::PE13>,
+    pe12: Peri<'static, peripherals::PE12>,
+) -> MotorDriver {
+    let mut uvw_pwm = ComplementaryPwm::new(
+        tim1,
+        Some(PwmPin::new(pe9, embassy_stm32::gpio::OutputType::PushPull)),
+        Some(ComplementaryPwmPin::new(
+            pe8,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(PwmPin::new(pe11, embassy_stm32::gpio::OutputType::PushPull)),
+        Some(ComplementaryPwmPin::new(
+            pe10,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        Some(PwmPin::new(pe13, embassy_stm32::gpio::OutputType::PushPull)),
+        Some(ComplementaryPwmPin::new(
+            pe12,
+            embassy_stm32::gpio::OutputType::PushPull,
+        )),
+        None,
+        None,
+        config::pwm::DEFAULT_FREQUENCY,
+        CountingMode::EdgeAlignedUp,
+    );
+
+    uvw_pwm.disable(Channel::Ch1);
+    uvw_pwm.disable(Channel::Ch2);
+    uvw_pwm.disable(Channel::Ch3);
+    uvw_pwm.set_dead_time(config::pwm::DEFAULT_DEAD_TIME);
+    uvw_pwm.enable(Channel::Ch1);
+    uvw_pwm.enable(Channel::Ch2);
+    uvw_pwm.enable(Channel::Ch3);
+
+    MotorDriver::new(uvw_pwm)
 }

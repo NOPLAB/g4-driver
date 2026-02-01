@@ -69,7 +69,7 @@ async fn execute_calibration_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
     let count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
     if count >= 10000 {
         DEBUG_COUNTER.store(0, Ordering::Relaxed);
-        let hall_state = crate::motor_driver::get_hall_state();
+        let hall_state = crate::board::get_hall_state();
         info!(
             "[Calibration Execute] Hall state={}, sensor_angle={} rad ({} deg)",
             hall_state,

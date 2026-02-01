@@ -1,22 +1,13 @@
-//! ハードウェア初期化モジュール
+//! クロック設定モジュール
 //!
-//! ペリフェラルの初期化ロジックを集約します。
+//! HSI → PLL（÷4 × 85 ÷ 2）で170MHz生成
 
-use embassy_stm32::{bind_interrupts, can, peripherals, Config};
+use embassy_stm32::Config;
 
-use crate::fmt::*;
-use crate::motor_driver;
-
-// CANの割り込みをバインド
-bind_interrupts!(pub struct Irqs {
-    FDCAN1_IT0 => can::IT0InterruptHandler<peripherals::FDCAN1>;
-    FDCAN1_IT1 => can::IT1InterruptHandler<peripherals::FDCAN1>;
-});
-
-/// RCCクロック設定を初期化
+/// RCCクロック設定を作成
 ///
 /// HSI → PLL（÷4 × 85 ÷ 2）で170MHz生成
-pub fn create_clock_config() -> Config {
+pub fn create_config() -> Config {
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::mux::{Adcsel, ClockMux, Fdcansel};
@@ -39,16 +30,4 @@ pub fn create_clock_config() -> Config {
         config.rcc.mux = clock_mux;
     }
     config
-}
-
-/// TIM4 Hallセンサーインターフェース初期化
-///
-/// PB6=H1、PB7=H2、PB8=H3（XORモード）
-///
-/// # Safety
-/// PACを使用した直接レジスタ操作を含む
-pub unsafe fn init_hall_sensor() {
-    info!("Initializing TIM4 Hall Sensor Interface (XOR mode)...");
-    motor_driver::init_hall_timer();
-    info!("TIM4 Hall Sensor Interface initialized");
 }

@@ -45,11 +45,11 @@ pub trait PwmDriver {
 pub trait BootstrapChargeable {
     /// 全ローサイドをON、ハイサイドをOFF
     ///
-    /// 補完PWMでDuty=max_dutyに設定すると：
-    /// - ハイサイド(INHx): OFF
-    /// - ローサイド(INLx): ON
+    /// Edge-aligned PWMでDuty=0に設定すると：
+    /// - メイン出力(INHx): Low → ハイサイドOFF
+    /// - 補完出力(INLx): High → ローサイドON
     ///
-    /// これによりブートストラップコンデンサが充電される
+    /// OUTxピンがGNDに接続され、ブートストラップコンデンサが充電される。
     fn set_all_low_side_on(&mut self);
 
     /// 全チャネルをOFF

@@ -7,7 +7,7 @@ use crate::config::motor;
 use crate::fmt::*;
 use crate::state::{self, ControlMode, RUNTIME};
 
-use crate::motor_driver;
+use crate::board;
 
 use super::mode::{ModeContext, ModeResult};
 
@@ -44,7 +44,7 @@ impl OpenLoopMode {
         let dt = ctx.dt;
 
         // Hall状態を取得
-        let hall_state = motor_driver::get_hall_state();
+        let hall_state = board::get_hall_state();
         let is_valid_hall = (1..=6).contains(&hall_state);
 
         // 目標速度から回転方向を決定
@@ -57,10 +57,8 @@ impl OpenLoopMode {
         let (hall_electrical_angle, _speed_rpm, _hall) = hall_sensor.update(dt);
 
         // OpenLoopコントローラ更新
-        let hall_speed_rpm = motor_driver::calculate_speed_rpm(
-            motor_driver::get_period_cycles(),
-            motor::DEFAULT_POLE_PAIRS,
-        );
+        let hall_speed_rpm =
+            board::calculate_speed_rpm(board::get_period_cycles(), motor::DEFAULT_POLE_PAIRS);
         let output = openloop_controller.update(
             Some(hall_electrical_angle),
             hall_speed_rpm,

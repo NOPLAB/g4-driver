@@ -11,8 +11,8 @@ use embassy_stm32::{
 };
 use embassy_time::{Duration, Instant, Timer};
 
+use crate::board::traits::{BootstrapChargeable, GateDriverControl};
 use crate::fmt::*;
-use crate::motor_driver::traits::{BootstrapChargeable, GateDriverControl};
 
 use super::registers::{reg, status, CLEAR_ALL_FAULTS, I2C_ADDRESS};
 
