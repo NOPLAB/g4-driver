@@ -3,8 +3,6 @@
 //! I2C3経由でゲートドライバーICを初期化し、フォルトクリアを行います。
 //! データシート DS13630 Rev 2 に基づく実装。
 
-pub mod registers;
-
 use embassy_stm32::{
     gpio::{Input, Pull},
     i2c::{self, I2c},
@@ -14,7 +12,9 @@ use embassy_stm32::{
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::fmt::*;
-use registers::{reg, status, CLEAR_ALL_FAULTS, I2C_ADDRESS};
+use crate::motor_driver::traits::{BootstrapChargeable, GateDriverControl};
+
+use super::registers::{reg, status, CLEAR_ALL_FAULTS, I2C_ADDRESS};
 
 /// READY待機タイムアウト [ms]
 const READY_TIMEOUT_MS: u64 = 100;
@@ -76,13 +76,66 @@ impl<'d> GateDriver<'d> {
         }
     }
 
+    /// READYピンがHighになるまで待機
+    async fn wait_for_ready(&self) -> Result<(), GateDriverError> {
+        let timeout = Duration::from_millis(READY_TIMEOUT_MS);
+        let start = Instant::now();
+
+        while !self.ready_pin.is_high() {
+            if start.elapsed() > timeout {
+                error!("READY pin timeout after {}ms", READY_TIMEOUT_MS);
+                return Err(GateDriverError::ReadyTimeout);
+            }
+            Timer::after(Duration::from_millis(1)).await;
+        }
+        Ok(())
+    }
+
+    /// フォルトクリア（CLEARレジスタに0xFFを書き込む）
+    fn clear_faults(&mut self) -> Result<(), GateDriverError> {
+        self.i2c
+            .blocking_write(I2C_ADDRESS, &[reg::CLEAR, CLEAR_ALL_FAULTS])
+            .map_err(|_| GateDriverError::ClearFaultFailed)
+    }
+
+    /// ステータスレジスタを読み取り
+    fn read_status(&mut self) -> Result<u8, GateDriverError> {
+        let mut buf = [0u8; 1];
+        self.i2c
+            .blocking_write_read(I2C_ADDRESS, &[reg::STATUS], &mut buf)
+            .map_err(|_| GateDriverError::I2cError)?;
+        Ok(buf[0])
+    }
+
+    /// レジスタを読み取り
+    #[allow(dead_code)]
+    pub fn read_register(&mut self, register: u8) -> Result<u8, GateDriverError> {
+        let mut buf = [0u8; 1];
+        self.i2c
+            .blocking_write_read(I2C_ADDRESS, &[register], &mut buf)
+            .map_err(|_| GateDriverError::I2cError)?;
+        Ok(buf[0])
+    }
+
+    /// レジスタに書き込み
+    #[allow(dead_code)]
+    pub fn write_register(&mut self, register: u8, value: u8) -> Result<(), GateDriverError> {
+        self.i2c
+            .blocking_write(I2C_ADDRESS, &[register, value])
+            .map_err(|_| GateDriverError::I2cError)
+    }
+}
+
+impl<'d> GateDriverControl for GateDriver<'d> {
+    type Error = GateDriverError;
+
     /// ゲートドライバーを初期化
     ///
     /// 1. READYピンがHighになるまで待機
     /// 2. ステータス読み取り（デバッグ用）
     /// 3. フォルトクリア
     /// 4. NFAULTピンを確認
-    pub async fn initialize(&mut self) -> Result<(), GateDriverError> {
+    async fn initialize(&mut self) -> Result<(), Self::Error> {
         info!("Initializing gate driver IC via I2C3...");
 
         // 1. READYピン待機
@@ -131,64 +184,14 @@ impl<'d> GateDriver<'d> {
         Ok(())
     }
 
-    /// READYピンがHighになるまで待機
-    async fn wait_for_ready(&self) -> Result<(), GateDriverError> {
-        let timeout = Duration::from_millis(READY_TIMEOUT_MS);
-        let start = Instant::now();
-
-        while !self.ready_pin.is_high() {
-            if start.elapsed() > timeout {
-                error!("READY pin timeout after {}ms", READY_TIMEOUT_MS);
-                return Err(GateDriverError::ReadyTimeout);
-            }
-            Timer::after(Duration::from_millis(1)).await;
-        }
-        Ok(())
-    }
-
-    /// フォルトクリア（CLEARレジスタに0xFFを書き込む）
-    fn clear_faults(&mut self) -> Result<(), GateDriverError> {
-        self.i2c
-            .blocking_write(I2C_ADDRESS, &[reg::CLEAR, CLEAR_ALL_FAULTS])
-            .map_err(|_| GateDriverError::ClearFaultFailed)
-    }
-
     /// NFAULTピンの状態を確認（High = 正常）
-    pub fn is_nfault_ok(&self) -> bool {
+    fn is_nfault_ok(&self) -> bool {
         self.nfault_pin.is_high()
     }
 
     /// READYピンの状態を確認
-    #[allow(dead_code)]
-    pub fn is_ready(&self) -> bool {
+    fn is_ready(&self) -> bool {
         self.ready_pin.is_high()
-    }
-
-    /// ステータスレジスタを読み取り
-    fn read_status(&mut self) -> Result<u8, GateDriverError> {
-        let mut buf = [0u8; 1];
-        self.i2c
-            .blocking_write_read(I2C_ADDRESS, &[reg::STATUS], &mut buf)
-            .map_err(|_| GateDriverError::I2cError)?;
-        Ok(buf[0])
-    }
-
-    /// レジスタを読み取り
-    #[allow(dead_code)]
-    pub fn read_register(&mut self, register: u8) -> Result<u8, GateDriverError> {
-        let mut buf = [0u8; 1];
-        self.i2c
-            .blocking_write_read(I2C_ADDRESS, &[register], &mut buf)
-            .map_err(|_| GateDriverError::I2cError)?;
-        Ok(buf[0])
-    }
-
-    /// レジスタに書き込み
-    #[allow(dead_code)]
-    pub fn write_register(&mut self, register: u8, value: u8) -> Result<(), GateDriverError> {
-        self.i2c
-            .blocking_write(I2C_ADDRESS, &[register, value])
-            .map_err(|_| GateDriverError::I2cError)
     }
 }
 
@@ -215,12 +218,4 @@ where
     pwm.set_all_off();
 
     info!("Bootstrap charge complete");
-}
-
-/// ブートストラップ充電可能なPWMドライバーのトレイト
-pub trait BootstrapChargeable {
-    /// 全ローサイドをON、ハイサイドをOFF
-    fn set_all_low_side_on(&mut self);
-    /// 全チャネルをOFF
-    fn set_all_off(&mut self);
 }

@@ -4,8 +4,6 @@
 mod adapters;
 mod config;
 mod fmt;
-mod gate_driver;
-mod hall_tim;
 mod hardware;
 mod init;
 mod motor_driver;
@@ -33,9 +31,9 @@ use embassy_stm32::{
 use embassy_time::{Duration, Timer};
 
 use fmt::*;
-use gate_driver::{bootstrap_charge, GateDriver};
 use hardware::Irqs;
 use init::ConfigLoader;
+use motor_driver::{bootstrap_charge, GateDriver, GateDriverControl, MotorDriver};
 use tasks::{can_task, led_task, motor_control_task, voltage_monitor_task};
 
 #[embassy_executor::main]
@@ -161,7 +159,7 @@ async fn main(spawner: Spawner) {
     uvw_pwm.enable(Channel::Ch3);
 
     // モータードライバー作成＆ブートストラップ充電
-    let mut motor_driver = motor_driver::MotorDriver::new(uvw_pwm);
+    let mut motor_driver = MotorDriver::new(uvw_pwm);
     bootstrap_charge(&mut motor_driver).await;
 
     // TIM4 Hallセンサーインターフェース初期化

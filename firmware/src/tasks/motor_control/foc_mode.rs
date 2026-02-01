@@ -9,7 +9,7 @@ use crate::config::motor;
 use crate::fmt::*;
 use crate::state::{ControlMode, RUNTIME};
 
-use crate::hall_tim;
+use crate::motor_driver;
 use crate::state;
 
 use super::mode::{ModeContext, ModeResult};
@@ -34,8 +34,8 @@ impl FocMode {
     /// モード開始時の初期化
     pub fn on_enter(&self, ctx: &mut ModeContext<'_>, _prev_mode: ControlMode) {
         // 実際のHall速度を取得
-        let period = hall_tim::get_period_cycles();
-        let actual_rpm = hall_tim::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
+        let period = motor_driver::get_period_cycles();
+        let actual_rpm = motor_driver::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
 
         // 実測値が有効な場合はそれを使用、そうでなければOpenLoopの理論値を使用
         let is_reverse = ctx.resources.openloop_controller.is_reverse();
@@ -148,7 +148,7 @@ impl FocMode {
         if mode_count >= 10000 {
             FOC_MODE_LOG_COUNTER.store(0, Ordering::Relaxed);
 
-            let period_cycles = hall_tim::get_period_cycles();
+            let period_cycles = motor_driver::get_period_cycles();
             debug!(
                 "[FOC] Speed: {}/{} RPM (ramped: {}), Vq={}V, Hall: {}, Period: {} cycles",
                 speed_rpm,

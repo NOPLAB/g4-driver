@@ -12,7 +12,7 @@ use crate::adapters::HallSensorAdapter;
 use crate::config::{
     dead_time_compensation, flux_weakening, foc_stall, hall, motor, openloop, pwm, speed, voltage,
 };
-use crate::hall_tim;
+use crate::motor_driver;
 use crate::state::RUNTIME;
 
 /// モーター制御に必要な全リソース
@@ -90,7 +90,7 @@ impl ControllerResources {
     fn reset_common(&mut self) {
         self.foc_controller.reset();
         self.hall_sensor.reset();
-        hall_tim::reset_state();
+        motor_driver::reset_state();
     }
 
     /// 全リソースをリセット（モーター停止時に呼び出し）

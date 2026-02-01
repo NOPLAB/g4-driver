@@ -1,14 +1,18 @@
-//! モータードライバー抽象化レイヤー
+//! TIM1ベースの3相PWMドライバー実装
 //!
-//! PWMハードウェアへの直接アクセスを隠蔽し、
-//! モーター制御に必要な高レベルインターフェースを提供します。
+//! STM32G431VBTのTIM1を使用して3相補完PWMを出力します。
+//!
+//! ## ピン配置
+//! - PE9/PE8: U相 (CH1/CH1N)
+//! - PE11/PE10: V相 (CH2/CH2N)
+//! - PE13/PE12: W相 (CH3/CH3N)
 
 use embassy_stm32::{
     peripherals,
     timer::{complementary_pwm::ComplementaryPwm, Channel},
 };
 
-use crate::gate_driver::BootstrapChargeable;
+use crate::motor_driver::traits::{BootstrapChargeable, PwmDriver};
 
 /// 3相モータードライバー
 ///
@@ -29,49 +33,77 @@ impl MotorDriver {
     }
 
     /// PWMの最大Duty値を取得
+    #[inline(always)]
     pub fn max_duty(&self) -> u16 {
         self.max_duty
     }
 
     /// 3相全てのDuty比を設定
-    ///
-    /// # 引数
-    /// * `duty_u` - U相のDuty比
-    /// * `duty_v` - V相のDuty比
-    /// * `duty_w` - W相のDuty比
+    #[inline(always)]
     pub fn set_duty_uvw(&mut self, duty_u: u16, duty_v: u16, duty_w: u16) {
+        <Self as PwmDriver>::set_duty_uvw(self, duty_u, duty_v, duty_w)
+    }
+
+    /// 全チャネルを有効化
+    #[inline(always)]
+    pub fn enable_all_channels(&mut self) {
+        <Self as PwmDriver>::enable_all_channels(self)
+    }
+
+    /// 全チャネルを無効化
+    #[inline(always)]
+    pub fn disable_all_channels(&mut self) {
+        <Self as PwmDriver>::disable_all_channels(self)
+    }
+
+    /// 全チャネルのDuty比を0にして停止
+    #[inline(always)]
+    pub fn stop(&mut self) {
+        <Self as PwmDriver>::stop(self)
+    }
+
+    /// 各チャネルを個別に有効/無効化
+    #[inline(always)]
+    pub fn set_channels(&mut self, enable_u: bool, enable_v: bool, enable_w: bool) {
+        <Self as PwmDriver>::set_channels(self, enable_u, enable_v, enable_w)
+    }
+}
+
+impl PwmDriver for MotorDriver {
+    #[inline(always)]
+    fn max_duty(&self) -> u16 {
+        self.max_duty
+    }
+
+    #[inline(always)]
+    fn set_duty_uvw(&mut self, duty_u: u16, duty_v: u16, duty_w: u16) {
         self.pwm.set_duty(Channel::Ch1, duty_u);
         self.pwm.set_duty(Channel::Ch2, duty_v);
         self.pwm.set_duty(Channel::Ch3, duty_w);
     }
 
-    /// 全チャネルを有効化
-    pub fn enable_all_channels(&mut self) {
+    #[inline(always)]
+    fn enable_all_channels(&mut self) {
         self.pwm.enable(Channel::Ch1);
         self.pwm.enable(Channel::Ch2);
         self.pwm.enable(Channel::Ch3);
     }
 
-    /// 全チャネルを無効化
-    pub fn disable_all_channels(&mut self) {
+    #[inline(always)]
+    fn disable_all_channels(&mut self) {
         self.pwm.disable(Channel::Ch1);
         self.pwm.disable(Channel::Ch2);
         self.pwm.disable(Channel::Ch3);
     }
 
-    /// 全チャネルのDuty比を0にして停止
-    pub fn stop(&mut self) {
+    #[inline(always)]
+    fn stop(&mut self) {
         self.set_duty_uvw(0, 0, 0);
         self.disable_all_channels();
     }
 
-    /// 各チャネルを個別に有効/無効化
-    ///
-    /// # 引数
-    /// * `enable_u` - U相を有効にするか
-    /// * `enable_v` - V相を有効にするか
-    /// * `enable_w` - W相を有効にするか
-    pub fn set_channels(&mut self, enable_u: bool, enable_v: bool, enable_w: bool) {
+    #[inline(always)]
+    fn set_channels(&mut self, enable_u: bool, enable_v: bool, enable_w: bool) {
         if enable_u {
             self.pwm.enable(Channel::Ch1);
         } else {

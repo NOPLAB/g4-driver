@@ -10,7 +10,7 @@ use crate::config::advance_angle::{
 };
 
 // Note: advance_angle config imports are used by HallConfig initialization
-use crate::hall_tim;
+use crate::motor_driver::{calculate_speed_rpm, get_hall_state, get_snapshot};
 
 /// Hall sensor adapter that combines TIM4 hardware with bldc processing
 pub struct HallSensorAdapter {
@@ -61,11 +61,11 @@ impl HallSensorAdapter {
     /// Tuple of (electrical_angle, speed_rpm, hall_state)
     pub fn update(&mut self, dt: f32) -> (f32, f32, u8) {
         // Read consistent snapshot from TIM4 hardware (sequence-locked)
-        let (hall_state, period_cycles, is_timeout) = hall_tim::get_snapshot();
+        let (hall_state, period_cycles, is_timeout) = get_snapshot();
 
         // Calculate instantaneous speed from TIM4 period
         let instant_rpm = if !is_timeout && period_cycles > 0 {
-            hall_tim::calculate_speed_rpm(period_cycles, self.processor_pole_pairs())
+            calculate_speed_rpm(period_cycles, self.processor_pole_pairs())
         } else {
             0.0
         };
@@ -178,7 +178,7 @@ impl SpeedSensor for HallSensorAdapter {
 
 impl HallStateReader for HallSensorAdapter {
     fn get_hall_state(&self) -> u8 {
-        hall_tim::get_hall_state()
+        get_hall_state()
     }
 }
 
@@ -190,6 +190,6 @@ pub struct HallStateReaderAdapter;
 
 impl HallStateReader for HallStateReaderAdapter {
     fn get_hall_state(&self) -> u8 {
-        hall_tim::get_hall_state()
+        get_hall_state()
     }
 }

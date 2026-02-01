@@ -5,7 +5,7 @@
 use embassy_stm32::{bind_interrupts, can, peripherals, Config};
 
 use crate::fmt::*;
-use crate::hall_tim;
+use crate::motor_driver;
 
 // CANの割り込みをバインド
 bind_interrupts!(pub struct Irqs {
@@ -49,6 +49,6 @@ pub fn create_clock_config() -> Config {
 /// PACを使用した直接レジスタ操作を含む
 pub unsafe fn init_hall_sensor() {
     info!("Initializing TIM4 Hall Sensor Interface (XOR mode)...");
-    hall_tim::init_hall_timer();
+    motor_driver::init_hall_timer();
     info!("TIM4 Hall Sensor Interface initialized");
 }

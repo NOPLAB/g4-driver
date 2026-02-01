@@ -20,6 +20,8 @@
 use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use embassy_stm32::pac;
 
+use crate::motor_driver::traits::HallSensorInterface;
+
 // ========================================
 // シーケンスロック機構（ISR-タスク間同期）
 // ========================================
@@ -357,4 +359,60 @@ pub fn calculate_speed_rpm(period_cycles: u32, pole_pairs: u8) -> f32 {
     }
 
     rpm
+}
+
+// ========================================
+// HallSensorインターフェース実装
+// ========================================
+
+/// Hallセンサーラッパー構造体
+///
+/// 静的Atomic変数へのアクセサとして機能するゼロサイズ型。
+/// HallSensorInterfaceトレイトを実装。
+#[allow(dead_code)]
+pub struct HallSensor;
+
+impl HallSensor {
+    /// 新しいHallSensorインスタンスを作成
+    #[allow(dead_code)]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for HallSensor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HallSensorInterface for HallSensor {
+    #[inline(always)]
+    fn get_hall_state(&self) -> u8 {
+        get_hall_state()
+    }
+
+    #[inline(always)]
+    fn get_period_cycles(&self) -> u32 {
+        get_period_cycles()
+    }
+
+    #[inline(always)]
+    fn is_timeout(&self) -> bool {
+        is_timeout()
+    }
+
+    #[inline(always)]
+    fn get_snapshot(&self) -> (u8, u32, bool) {
+        get_snapshot()
+    }
+
+    #[inline(always)]
+    fn calculate_speed_rpm(&self, period_cycles: u32, pole_pairs: u8) -> f32 {
+        calculate_speed_rpm(period_cycles, pole_pairs)
+    }
+
+    fn reset_state(&mut self) {
+        reset_state()
+    }
 }
