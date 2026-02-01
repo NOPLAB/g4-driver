@@ -53,7 +53,7 @@ impl ControlParams {
     /// デフォルト値で新しい制御パラメータを作成
     pub const fn new() -> Self {
         Self {
-            target_speed: 3000.0,
+            target_speed: 1000.0,
             pi_gains: (speed::DEFAULT_KP, speed::DEFAULT_KI),
             enabled: true,
             control_mode: ControlMode::OpenLoop,
@@ -77,7 +77,7 @@ impl CalibrationParams {
     pub const fn new() -> Self {
         Self {
             request: true,
-            torque: 5,
+            torque: 3,
             result: CalibrationResult {
                 electrical_offset: 0.0,
                 direction_inversed: false,
@@ -159,12 +159,14 @@ impl FocCounters {
 
     /// 無効Hallカウンタをインクリメントし、新しい値を返す
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn increment_invalid_hall(&self) -> u32 {
         self.invalid_hall_counter.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// 無効Hallカウンタをリセット
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn reset_invalid_hall(&self) {
         self.invalid_hall_counter.store(0, Ordering::Relaxed);
     }
@@ -232,12 +234,14 @@ impl OpenLoopCounters {
 
     /// ログカウンタをインクリメントし、前の値を返す
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn increment_log(&self) -> u32 {
         self.log_counter.fetch_add(1, Ordering::Relaxed)
     }
 
     /// ログカウンタをリセット
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn reset_log(&self) {
         self.log_counter.store(0, Ordering::Relaxed);
     }

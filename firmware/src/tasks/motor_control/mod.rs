@@ -1,13 +1,13 @@
 //! モーター制御タスク
 //!
-//! 10kHz FOCループ + オープンループ始動制御を実行します。
-//! 各制御モードは独立したモジュールに分離されています。
+//! ステートマシンベースのFOC制御を実行します。
+//! 各制御モード（OpenLoop、FOC、Calibration）は独立した状態として管理されます。
 
-mod calibration_mode;
-mod foc_mode;
-mod mode;
-mod openloop_mode;
-mod resources;
+mod hardware;
+mod logging;
+mod modes;
+mod state_machine;
+mod transition;
 
 use embassy_time::{Duration, Timer};
 
@@ -15,136 +15,10 @@ use crate::board::MotorDriver;
 use crate::config::{control, motor, pwm};
 use crate::fmt::*;
 use crate::state;
-use crate::state::ControlMode;
 
-use calibration_mode::CALIBRATION_MODE;
-use foc_mode::FOC_MODE;
-use mode::ModeContext;
-use openloop_mode::OPENLOOP_MODE;
-use resources::ControllerResources;
-
-/// モーターコントローラー
-///
-/// 各モード状態を保持し、統一インターフェースで制御を実行
-struct MotorController {
-    /// モータードライバー
-    motor_driver: MotorDriver,
-    /// 制御リソース
-    resources: ControllerResources,
-    /// 現在の制御モード
-    current_mode: ControlMode,
-    /// モーター有効状態の追跡（PWMチャネル制御用）
-    was_enabled: bool,
-    /// 制御周期 [s]
-    dt: f32,
-}
-
-impl MotorController {
-    /// 新しいMotorControllerを作成
-    fn new(motor_driver: MotorDriver) -> Self {
-        let resources = ControllerResources::new(motor_driver.max_duty());
-
-        Self {
-            motor_driver,
-            resources,
-            current_mode: ControlMode::OpenLoop,
-            was_enabled: false,
-            dt: control::DEFAULT_PERIOD_US as f32 / 1_000_000.0,
-        }
-    }
-
-    /// モーター有効状態をチェック
-    async fn is_enabled(&self) -> bool {
-        state::motor_context().await.enabled
-    }
-
-    /// モーター無効時の処理
-    async fn handle_disabled(&mut self) {
-        if self.was_enabled {
-            info!("Motor control loop: Disabling PWM channels");
-            self.was_enabled = false;
-        }
-
-        // モーター停止：PWMチャネルを完全無効化
-        self.motor_driver.stop();
-
-        // 全リソースをリセット
-        self.resources.reset_all();
-        self.current_mode = ControlMode::OpenLoop;
-    }
-
-    /// モーター有効化時の処理
-    fn handle_enabled(&mut self) {
-        if !self.was_enabled {
-            info!("Motor control loop: Starting with OpenLoop mode");
-            self.motor_driver.enable_all_channels();
-            self.was_enabled = true;
-        }
-    }
-
-    /// キャリブレーションリクエストをチェック
-    async fn handle_calibration_request(&mut self) {
-        let mut calib_ctx = state::calibration_context().await;
-        if calib_ctx.request {
-            info!("Calibration requested, switching to Calibration mode");
-            calib_ctx.request = false;
-            let torque_f32 = calib_ctx.torque as f32 / 100.0;
-            drop(calib_ctx);
-
-            info!("Starting motor calibration...");
-            info!("  Pole pairs: {}", motor::DEFAULT_POLE_PAIRS);
-            info!("  Torque: {}", torque_f32);
-
-            self.resources.prepare_for_calibration(torque_f32);
-            self.current_mode = ControlMode::Calibration;
-            state::motor_context().await.control_mode = ControlMode::Calibration;
-        }
-    }
-
-    /// 現在のモードを実行
-    async fn execute_current_mode(&mut self) {
-        let mut ctx = ModeContext::new(&mut self.resources, &mut self.motor_driver, self.dt);
-
-        let result = match self.current_mode {
-            ControlMode::OpenLoop => OPENLOOP_MODE.execute(&mut ctx).await,
-            ControlMode::ClosedLoopFoc => FOC_MODE.execute(&mut ctx).await,
-            ControlMode::Calibration => CALIBRATION_MODE.execute(&mut ctx).await,
-        };
-
-        // モード遷移処理
-        if let Some(next_mode) = result.next_mode() {
-            self.transition_to(next_mode);
-        }
-    }
-
-    /// モード遷移を実行
-    fn transition_to(&mut self, next_mode: ControlMode) {
-        let prev_mode = self.current_mode;
-
-        // 旧モードの終了処理
-        {
-            let mut ctx = ModeContext::new(&mut self.resources, &mut self.motor_driver, self.dt);
-            match prev_mode {
-                ControlMode::OpenLoop => OPENLOOP_MODE.on_exit(&mut ctx),
-                ControlMode::ClosedLoopFoc => FOC_MODE.on_exit(&mut ctx),
-                ControlMode::Calibration => CALIBRATION_MODE.on_exit(&mut ctx),
-            }
-        }
-
-        // モードを更新
-        self.current_mode = next_mode;
-
-        // 新モードの開始処理
-        {
-            let mut ctx = ModeContext::new(&mut self.resources, &mut self.motor_driver, self.dt);
-            match next_mode {
-                ControlMode::OpenLoop => OPENLOOP_MODE.on_enter(&mut ctx, prev_mode),
-                ControlMode::ClosedLoopFoc => FOC_MODE.on_enter(&mut ctx, prev_mode),
-                ControlMode::Calibration => CALIBRATION_MODE.on_enter(&mut ctx, prev_mode),
-            }
-        }
-    }
-}
+use hardware::Hardware;
+use state_machine::MotorState;
+use transition::Transition;
 
 /// モーター制御タスク（10kHz FOC制御ループ）
 #[embassy_executor::task]
@@ -152,43 +26,70 @@ pub async fn motor_control_task(motor_driver: MotorDriver) {
     // 電源投入後、ハードウェア安定待ち
     Timer::after(Duration::from_millis(500)).await;
 
-    info!("Motor control task started (OpenLoop + FOC mode)");
-
-    // 制御周期
-    let dt = control::DEFAULT_PERIOD_US as f32 / 1_000_000.0;
-
+    info!("Motor control task started");
     info!(
-        "FOC parameters: Pole pairs={}, Control freq={}Hz, dt={}s",
-        motor::DEFAULT_POLE_PAIRS,
+        "  Control freq={}Hz, Pole pairs={}",
         1_000_000 / control::DEFAULT_PERIOD_US,
-        dt
+        motor::DEFAULT_POLE_PAIRS
     );
     info!(
-        "PWM configuration: Frequency={}Hz, Max duty={}",
+        "  PWM freq={}Hz, Max duty={}",
         pwm::DEFAULT_FREQUENCY.0,
         motor_driver.max_duty()
     );
 
-    // モーターコントローラー初期化
-    let mut controller = MotorController::new(motor_driver);
+    let dt = control::DEFAULT_PERIOD_US as f32 / 1_000_000.0;
+    let mut hw = Hardware::new(motor_driver);
+    let mut motor_state = MotorState::new(hw.max_duty);
+    let mut was_enabled = false;
 
     loop {
-        // 1. モーター使能チェック
-        if !controller.is_enabled().await {
-            controller.handle_disabled().await;
+        // 1. モーター有効チェック
+        if !state::motor_context().await.enabled {
+            if was_enabled {
+                info!("Motor disabled");
+                was_enabled = false;
+            }
+            hw.stop();
+            motor_state = MotorState::new(hw.max_duty); // 状態リセット
             Timer::after(Duration::from_micros(control::DEFAULT_PERIOD_US)).await;
             continue;
         }
 
-        // モーター有効化時の処理
-        controller.handle_enabled();
+        if !was_enabled {
+            info!("Motor enabled, starting with OpenLoop mode");
+            hw.motor_driver.enable_all_channels();
+            was_enabled = true;
+        }
 
-        // 2. キャリブレーションリクエストをチェック
-        controller.handle_calibration_request().await;
+        // 2. キャリブレーションリクエストチェック
+        if let Some(trans) = check_calibration_request().await {
+            motor_state = trans.apply(&mut hw);
+        }
 
-        // 3. 制御モード別処理
-        controller.execute_current_mode().await;
+        // 3. 制御実行
+        if let Some(trans) = motor_state.update(&mut hw, dt).await {
+            motor_state = trans.apply(&mut hw);
+        }
+
+        // 4. グローバル状態を更新（CAN送信用）
+        state::motor_context().await.control_mode = motor_state.control_mode();
 
         Timer::after(Duration::from_micros(control::DEFAULT_PERIOD_US)).await;
+    }
+}
+
+/// キャリブレーションリクエストをチェック
+async fn check_calibration_request() -> Option<Transition> {
+    let mut ctx = state::calibration_context().await;
+    if ctx.request {
+        ctx.request = false;
+        let torque = ctx.torque as f32 / 100.0;
+        info!("Calibration requested");
+        info!("  Pole pairs: {}", motor::DEFAULT_POLE_PAIRS);
+        info!("  Torque: {}", torque);
+        Some(Transition::Calibration { torque })
+    } else {
+        None
     }
 }
