@@ -4,36 +4,33 @@
 
 use bldc::calibration::MotorCalibration;
 use bldc::compensation::{DeadTimeCompensation, FluxWeakeningController};
-use bldc::control::PiController;
+use bldc::control::stall_detector::StallDetectorConfig;
+use bldc::control::{FocConfig, FocController, OpenLoopConfig, OpenLoopController};
 use core::f32::consts::PI;
 
 use crate::adapters::HallSensorAdapter;
-use crate::config::{hall, motor, openloop, speed, voltage};
+use crate::config::{
+    dead_time_compensation, flux_weakening, foc_stall, hall, motor, openloop, pwm, speed, voltage,
+};
 use crate::hall_tim;
 use crate::state::RUNTIME;
-
-use super::foc_mode;
 
 /// モーター制御に必要な全リソース
 pub struct ControllerResources {
     /// Hallセンサー
     pub hall_sensor: HallSensorAdapter,
-    /// 速度PIコントローラ
-    pub speed_pi: PiController,
+    /// FOCコントローラー（PIコントローラ、速度ランプ、脱調検出を統合）
+    pub foc_controller: FocController,
+    /// OpenLoopコントローラー（SVPWMベース）
+    pub openloop_controller: OpenLoopController,
     /// キャリブレーションコントローラ
     pub calibration: MotorCalibration,
-    /// デッドタイム補償器
-    pub dead_time_comp: DeadTimeCompensation,
-    /// フラックス弱め制御器
-    pub flux_weakening: FluxWeakeningController,
-    /// 速度ランプ（加速度制限）用の現在指令速度
-    pub ramped_target_speed: f32,
 }
 
 impl ControllerResources {
     /// 新しいリソースセットを作成
     pub fn new(max_duty: u16) -> Self {
-        // ホールセンサ初期化（foc-simple互換の機械角ベース計算）
+        // ホールセンサ初期化
         let mut hall_sensor =
             HallSensorAdapter::new(motor::DEFAULT_POLE_PAIRS, speed::DEFAULT_FILTER_ALPHA);
         hall_sensor.set_interpolation(false); // 角度補間を無効化（ノイズ対策）
@@ -42,43 +39,64 @@ impl ControllerResources {
         let offset_rad = hall::DEFAULT_ANGLE_OFFSET_DEG * PI / 180.0;
         hall_sensor.set_electrical_offset(offset_rad);
 
-        // 速度PIコントローラ初期化（アンチワインドアップ有効、積分リミット設定）
-        let mut speed_pi =
-            PiController::new_symmetric(speed::DEFAULT_KP, speed::DEFAULT_KI, voltage::DEFAULT_MAX);
-        speed_pi.set_anti_windup(true);
-        speed_pi.set_integral_limit(speed::PI_INTEGRAL_LIMIT);
+        // FOCコントローラー初期化（ビルダーパターンで全機能を統合）
+        let foc_controller = FocController::builder(FocConfig {
+            speed_kp: speed::DEFAULT_KP,
+            speed_ki: speed::DEFAULT_KI,
+            max_voltage: voltage::DEFAULT_MAX,
+            v_dc: voltage::DEFAULT_DC_BUS,
+            max_duty,
+            vd: 0.0,
+            max_acceleration: speed::MAX_ACCELERATION,
+            min_voltage: voltage::MIN,
+            min_voltage_error_threshold: voltage::MIN_ERROR_THRESHOLD,
+            pi_integral_limit: speed::PI_INTEGRAL_LIMIT,
+            anti_windup_enabled: true,
+        })
+        .with_dead_time_compensation(create_dead_time_compensation(max_duty))
+        .with_flux_weakening(create_flux_weakening_controller())
+        .with_stall_detection(StallDetectorConfig {
+            speed_threshold: foc_stall::SPEED_THRESHOLD,
+            count_threshold: foc_stall::COUNT_THRESHOLD,
+        })
+        .build();
+
+        // OpenLoopコントローラー初期化（SVPWMベース）
+        let openloop_controller = OpenLoopController::new(OpenLoopConfig {
+            initial_rpm: openloop::DEFAULT_INITIAL_RPM,
+            target_rpm: openloop::DEFAULT_TARGET_RPM,
+            acceleration: openloop::DEFAULT_ACCELERATION,
+            voltage_ratio: openloop::DEFAULT_DUTY_RATIO as f32 / 100.0,
+            v_dc: voltage::DEFAULT_DC_BUS,
+            max_duty,
+            pole_pairs: motor::DEFAULT_POLE_PAIRS,
+            forced_commutation_cycles: openloop::FORCED_COMMUTATION_CYCLES,
+            min_cycles_for_foc: openloop::MIN_CYCLES_BEFORE_FOC,
+            min_speed_for_foc: openloop::MIN_SPEED_FOR_FOC,
+        });
 
         // キャリブレーション初期化（トルク0.1 = 10%、電力消費を抑える）
         let calibration = MotorCalibration::new(motor::DEFAULT_POLE_PAIRS, 0.1);
 
-        // デッドタイム補償器初期化
-        let dead_time_comp = foc_mode::create_dead_time_compensation(max_duty);
-
-        // フラックス弱め制御器初期化
-        let flux_weakening = foc_mode::create_flux_weakening_controller();
-
         Self {
             hall_sensor,
-            speed_pi,
+            foc_controller,
+            openloop_controller,
             calibration,
-            dead_time_comp,
-            flux_weakening,
-            ramped_target_speed: 0.0,
         }
     }
 
     /// 共通のリセット処理
     fn reset_common(&mut self) {
-        self.speed_pi.reset();
+        self.foc_controller.reset();
         self.hall_sensor.reset();
         hall_tim::reset_state();
-        self.flux_weakening.reset();
-        self.ramped_target_speed = 0.0;
     }
 
     /// 全リソースをリセット（モーター停止時に呼び出し）
     pub fn reset_all(&mut self) {
         self.reset_common();
+        self.openloop_controller.reset_for_normal();
         RUNTIME.openloop.reset_for_normal();
         RUNTIME.foc.reset_all();
     }
@@ -92,8 +110,10 @@ impl ControllerResources {
         RUNTIME.foc.reset_all();
 
         if is_recovery {
+            self.openloop_controller.reset_for_recovery();
             RUNTIME.openloop.reset_for_recovery();
         } else {
+            self.openloop_controller.reset_for_normal();
             RUNTIME.openloop.reset_for_normal();
         }
     }
@@ -108,16 +128,14 @@ impl ControllerResources {
     pub fn prepare_for_foc(&mut self, current_rpm: f32) {
         // OpenLoopのDuty相当のVq初期値を計算（出力の連続性を確保）
         let initial_vq = (openloop::DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
-        self.speed_pi.initialize_output(initial_vq);
+        self.foc_controller
+            .initialize_for_foc(current_rpm, initial_vq);
 
         // FOCの脱落カウンタをリセット
         RUNTIME.foc.reset_all();
 
         // Hall センサーの速度フィルタを現在の速度で初期化
         self.hall_sensor.reset_speed_filter(current_rpm);
-
-        // ランプも現在の速度からスタート（急激な変化を防ぐ）
-        self.ramped_target_speed = current_rpm;
     }
 
     /// キャリブレーションモード用の準備
@@ -125,4 +143,28 @@ impl ControllerResources {
         self.calibration.set_torque(torque);
         self.calibration.start();
     }
+}
+
+/// デッドタイム補償器を初期化
+fn create_dead_time_compensation(max_duty: u16) -> DeadTimeCompensation {
+    let mut comp = DeadTimeCompensation::new(
+        dead_time_compensation::DEAD_TIME_NS,
+        pwm::DEFAULT_FREQUENCY.0,
+        voltage::DEFAULT_DC_BUS,
+        max_duty,
+    );
+    comp.set_enabled(dead_time_compensation::ENABLED);
+    comp
+}
+
+/// フラックス弱め制御器を初期化
+fn create_flux_weakening_controller() -> FluxWeakeningController {
+    let mut fw = FluxWeakeningController::new(
+        flux_weakening::MIN_SPEED,
+        flux_weakening::MAX_SPEED,
+        flux_weakening::MAX_WEAKENING_RATIO,
+        flux_weakening::VD_RATE_LIMIT,
+    );
+    fw.set_enabled(flux_weakening::ENABLED);
+    fw
 }

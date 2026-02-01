@@ -1,22 +1,13 @@
 //! オープンループ制御モード
 //!
 //! SVPWMベースの強制転流で起動し、Hallセンサーベースの駆動に移行してFOCへ接続します。
-//! 時間ベースで電気角を進めることで、スムーズな起動を実現します。
-//! 逆回転（負の目標速度）にも対応しています。
+//! bldcクレートのOpenLoopControllerを使用して制御を簡素化。
 
 use crate::config::motor;
-use crate::config::openloop::{
-    DEFAULT_DUTY_RATIO, FORCED_COMMUTATION_CYCLES, MIN_CYCLES_BEFORE_FOC, MIN_SPEED_FOR_FOC,
-};
-use crate::config::voltage;
 use crate::fmt::*;
 use crate::state::{self, ControlMode, RUNTIME};
 
 use crate::hall_tim;
-
-// SVPWMとPark逆変換を使用
-use bldc::modulation::calculate_svpwm;
-use bldc::transforms::inverse_park;
 
 use super::mode::{ModeContext, ModeResult};
 
@@ -33,14 +24,11 @@ impl OpenLoopMode {
     /// モード開始時の初期化
     pub fn on_enter(&self, ctx: &mut ModeContext<'_>, prev_mode: ControlMode) {
         // FOCから戻ってきた場合は脱調回復モード
-        if prev_mode == ControlMode::ClosedLoopFoc {
+        let is_recovery = prev_mode == ControlMode::ClosedLoopFoc;
+        if is_recovery {
             info!("Entering OpenLoop recovery mode (from FOC stall)");
-            RUNTIME.openloop.reset_for_recovery();
-            ctx.resources.prepare_for_openloop_or_recovery(true);
-        } else {
-            RUNTIME.openloop.reset_for_normal();
-            ctx.resources.prepare_for_openloop_or_recovery(false);
         }
+        ctx.resources.prepare_for_openloop_or_recovery(is_recovery);
     }
 
     /// モード終了時のクリーンアップ
@@ -51,110 +39,97 @@ impl OpenLoopMode {
     /// 1制御サイクルの実行
     pub async fn execute(&self, ctx: &mut ModeContext<'_>) -> ModeResult {
         let hall_sensor = &mut ctx.resources.hall_sensor;
-        let exec_count = RUNTIME.openloop.increment_execution();
+        let openloop_controller = &mut ctx.resources.openloop_controller;
+        let motor_driver = &mut ctx.motor_driver;
+        let dt = ctx.dt;
+
+        // Hall状態を取得
         let hall_state = hall_tim::get_hall_state();
         let is_valid_hall = (1..=6).contains(&hall_state);
-        let pwm_max = ctx.motor_driver.max_duty();
-        let is_recovery = RUNTIME.openloop.is_recovery();
 
         // 目標速度から回転方向を決定
         let foc_params = state::get_foc_input_params().await;
         let is_reverse = foc_params.target_speed < 0.0;
+        openloop_controller.set_reverse(is_reverse);
         RUNTIME.openloop.set_reverse(is_reverse);
 
-        // フェーズ別処理
-        let (du, dv, dw, phase, current_rpm) = if exec_count < FORCED_COMMUTATION_CYCLES {
-            // SVPWMベース強制転流フェーズ
-            // 時間ベースで電気角を進める（逆回転時は逆方向）
-            let electrical_angle = RUNTIME.openloop.increment_angle(ctx.dt, is_reverse);
+        // Hall駆動フェーズ用の電気角を取得
+        let (hall_electrical_angle, _speed_rpm, _hall) = hall_sensor.update(dt);
 
-            // 固定電圧指令（逆回転時は負のVq）
-            let vq_base = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
-            let vq_cmd = if is_reverse { -vq_base } else { vq_base };
-            let vd_cmd = 0.0;
+        // OpenLoopコントローラ更新
+        let hall_speed_rpm =
+            hall_tim::calculate_speed_rpm(hall_tim::get_period_cycles(), motor::DEFAULT_POLE_PAIRS);
+        let output = openloop_controller.update(
+            Some(hall_electrical_angle),
+            hall_speed_rpm,
+            is_valid_hall,
+            dt,
+        );
 
-            // Park逆変換 → SVPWM
-            let (v_alpha, v_beta) = inverse_park(vd_cmd, vq_cmd, electrical_angle);
-            let (u, v, w) = calculate_svpwm(v_alpha, v_beta, voltage::DEFAULT_DC_BUS, pwm_max);
-
-            ctx.motor_driver.set_channels(true, true, true);
-
-            // 理論速度を計算（逆回転時は負の値）
-            let theoretical_rpm = RUNTIME.openloop.get_theoretical_rpm(is_reverse);
-            (u, v, w, "Forced", theoretical_rpm)
-        } else {
-            // Hall駆動フェーズ（SVPWMベース - FOCと同じ駆動方式）
-            // Hall センサーから電気角を取得
-            let (electrical_angle, _speed_rpm, _hall) = hall_sensor.update(ctx.dt);
-
-            // 固定電圧指令（逆回転時は負のVq）
-            let vq_base = (DEFAULT_DUTY_RATIO as f32 / 100.0) * voltage::DEFAULT_DC_BUS;
-            let vq_cmd = if is_reverse { -vq_base } else { vq_base };
-            let vd_cmd = 0.0;
-
-            // Park逆変換 → SVPWM（FOCと同じ計算）
-            let (v_alpha, v_beta) = inverse_park(vd_cmd, vq_cmd, electrical_angle);
-            let (u, v, w) = calculate_svpwm(v_alpha, v_beta, voltage::DEFAULT_DC_BUS, pwm_max);
-
-            ctx.motor_driver.set_channels(true, true, true);
-
-            // Hallセンサーからの実測速度（逆回転時は負の値として報告）
-            let period = hall_tim::get_period_cycles();
-            let measured_rpm = hall_tim::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
-            let signed_rpm = if is_reverse {
-                -measured_rpm
-            } else {
-                measured_rpm
-            };
-            (u, v, w, "SVPWM", signed_rpm)
-        };
-
-        ctx.motor_driver.set_duty_uvw(du, dv, dw);
+        // PWM出力
+        motor_driver.set_duty_uvw(output.duty.u, output.duty.v, output.duty.w);
+        motor_driver.set_channels(true, true, true);
 
         // ステータス更新
-        RUNTIME.status.update(current_rpm, 0.0);
-
-        // 速度計算（FOC切り替え判定用）
-        let period = hall_tim::get_period_cycles();
-        let speed = hall_tim::calculate_speed_rpm(period, motor::DEFAULT_POLE_PAIRS);
+        RUNTIME.status.update(output.current_rpm, 0.0);
 
         // ログ（1秒ごと）
         let log_count = RUNTIME.openloop.increment_log();
         if log_count >= 10000 {
             RUNTIME.openloop.reset_log();
-            let mode = if is_recovery { "(R)" } else { "" };
+
+            let mode = if openloop_controller.is_recovery() {
+                "(R)"
+            } else {
+                ""
+            };
             let dir = if is_reverse { " REV" } else { "" };
+            let phase = match output.phase {
+                bldc::OpenLoopPhase::ForcedCommutation => "Forced",
+                bldc::OpenLoopPhase::HallDriven => "SVPWM",
+            };
+
             info!(
                 "[{}{}{}] Hall:{}, Speed:{} RPM, Duty:{}/{}/{}, Cycle:{}",
-                phase, mode, dir, hall_state, speed, du, dv, dw, exec_count
+                phase,
+                mode,
+                dir,
+                hall_state,
+                hall_speed_rpm,
+                output.duty.u,
+                output.duty.v,
+                output.duty.w,
+                openloop_controller.get_execution_count()
             );
         }
 
         // フェーズ切り替えログ
-        if exec_count == FORCED_COMMUTATION_CYCLES && FORCED_COMMUTATION_CYCLES > 0 {
+        let exec_count = openloop_controller.get_execution_count();
+        if exec_count == crate::config::openloop::FORCED_COMMUTATION_CYCLES
+            && crate::config::openloop::FORCED_COMMUTATION_CYCLES > 0
+        {
             info!("[OpenLoop] Switching to Hall-based SVPWM commutation");
         }
 
-        // FOC切り替え判定
-        let time_ok = exec_count >= MIN_CYCLES_BEFORE_FOC;
-        let speed_ok = speed >= MIN_SPEED_FOR_FOC;
-
-        let ready = time_ok && is_valid_hall && speed_ok;
-
-        // 判定ログ（初回のみ）
-        if exec_count == MIN_CYCLES_BEFORE_FOC {
-            if !speed_ok {
-                let mode = if is_recovery { "(R)" } else { "" };
+        // FOC切り替え判定ログ（初回のみ）
+        if exec_count == crate::config::openloop::MIN_CYCLES_BEFORE_FOC {
+            if !output.ready_for_foc {
+                let mode = if openloop_controller.is_recovery() {
+                    "(R)"
+                } else {
+                    ""
+                };
                 info!(
-                    "[OpenLoop{}] Waiting for speed: {} < {} RPM",
-                    mode, speed, MIN_SPEED_FOR_FOC
+                    "[OpenLoop{}] Waiting for conditions: speed={} RPM, valid_hall={}",
+                    mode, hall_speed_rpm, is_valid_hall
                 );
             } else {
-                info!("[OpenLoop] Ready for FOC, speed={} RPM", speed);
+                info!("[OpenLoop] Ready for FOC, speed={} RPM", hall_speed_rpm);
             }
         }
 
-        if ready {
+        // FOC遷移
+        if output.ready_for_foc {
             ModeResult::TransitionTo(ControlMode::ClosedLoopFoc)
         } else {
             ModeResult::Continue

@@ -129,7 +129,7 @@ pub mod foc_stall {
 
 /// オープンループ始動パラメータ（6ステップ駆動）
 pub mod openloop {
-    /// 初期回転数 [RPM]（起動用：100RPMから開始）
+    /// 初期回転数 [RPM]（起動用：50RPMから開始）
     pub const DEFAULT_INITIAL_RPM: f32 = 50.0;
 
     /// FOC切替回転数 [RPM]

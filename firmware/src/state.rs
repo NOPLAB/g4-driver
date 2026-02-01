@@ -145,34 +145,16 @@ pub static MOTOR_STATE: Mutex<ThreadModeRawMutex, MotorState> = Mutex::new(Motor
 
 /// FOC制御用カウンタ
 pub struct FocCounters {
-    /// 脱調（速度低下）の連続カウンタ
-    stall_counter: AtomicU32,
     /// 無効Hall状態の連続カウンタ
     invalid_hall_counter: AtomicU32,
-    /// 電圧飽和の連続カウンタ
-    saturation_counter: AtomicU32,
 }
 
 impl FocCounters {
     /// 新しいFocCountersを作成
     pub const fn new() -> Self {
         Self {
-            stall_counter: AtomicU32::new(0),
             invalid_hall_counter: AtomicU32::new(0),
-            saturation_counter: AtomicU32::new(0),
         }
-    }
-
-    /// 脱調カウンタをインクリメントし、新しい値を返す
-    #[inline(always)]
-    pub fn increment_stall(&self) -> u32 {
-        self.stall_counter.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// 脱調カウンタをリセット
-    #[inline(always)]
-    pub fn reset_stall(&self) {
-        self.stall_counter.store(0, Ordering::Relaxed);
     }
 
     /// 無効Hallカウンタをインクリメントし、新しい値を返す
@@ -187,31 +169,10 @@ impl FocCounters {
         self.invalid_hall_counter.store(0, Ordering::Relaxed);
     }
 
-    /// 飽和カウンタをインクリメントし、新しい値を返す
-    #[inline(always)]
-    pub fn increment_saturation(&self) -> u32 {
-        self.saturation_counter.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// 飽和カウンタをリセット
-    #[inline(always)]
-    pub fn reset_saturation(&self) {
-        self.saturation_counter.store(0, Ordering::Relaxed);
-    }
-
-    /// 飽和カウンタの値を取得
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub fn get_saturation(&self) -> u32 {
-        self.saturation_counter.load(Ordering::Relaxed)
-    }
-
     /// 全カウンタをリセット
     #[inline(always)]
     pub fn reset_all(&self) {
-        self.stall_counter.store(0, Ordering::Relaxed);
         self.invalid_hall_counter.store(0, Ordering::Relaxed);
-        self.saturation_counter.store(0, Ordering::Relaxed);
     }
 }
 
@@ -254,38 +215,19 @@ impl StatusOutput {
 
 /// OpenLoop制御用カウンタ
 pub struct OpenLoopCounters {
-    /// 実行カウンタ
-    execution_counter: AtomicU32,
     /// ログカウンタ
     log_counter: AtomicU32,
-    /// 脱調回復モードフラグ（0=通常、1=回復）
-    recovery_mode: AtomicU32,
-    /// 電気角（ビット表現）- SVPWMベース強制転流用
-    electrical_angle_bits: AtomicU32,
     /// 逆回転フラグ（0=正回転、1=逆回転）
     reverse_flag: AtomicU32,
 }
-
-/// OpenLoop強制転流の目標角速度 [rad/s]（電気角）
-/// 200 RPM相当 = 200 * 6極対 * 2π / 60 = 125.66 rad/s
-const OPENLOOP_ANGULAR_VELOCITY: f32 = 125.66;
 
 impl OpenLoopCounters {
     /// 新しいOpenLoopCountersを作成
     pub const fn new() -> Self {
         Self {
-            execution_counter: AtomicU32::new(0),
             log_counter: AtomicU32::new(0),
-            recovery_mode: AtomicU32::new(0),
-            electrical_angle_bits: AtomicU32::new(0),
             reverse_flag: AtomicU32::new(0),
         }
-    }
-
-    /// 実行カウンタをインクリメントし、前の値を返す
-    #[inline(always)]
-    pub fn increment_execution(&self) -> u32 {
-        self.execution_counter.fetch_add(1, Ordering::Relaxed)
     }
 
     /// ログカウンタをインクリメントし、前の値を返す
@@ -300,31 +242,17 @@ impl OpenLoopCounters {
         self.log_counter.store(0, Ordering::Relaxed);
     }
 
-    /// 回復モードかどうかを取得
-    #[inline(always)]
-    pub fn is_recovery(&self) -> bool {
-        self.recovery_mode.load(Ordering::Relaxed) != 0
-    }
-
     /// 通常起動用リセット
     #[inline(always)]
     pub fn reset_for_normal(&self) {
-        self.execution_counter.store(0, Ordering::Relaxed);
         self.log_counter.store(0, Ordering::Relaxed);
-        self.recovery_mode.store(0, Ordering::Relaxed);
-        self.electrical_angle_bits
-            .store(0.0f32.to_bits(), Ordering::Relaxed);
         self.reverse_flag.store(0, Ordering::Relaxed);
     }
 
     /// 脱調回復用リセット
     #[inline(always)]
     pub fn reset_for_recovery(&self) {
-        self.execution_counter.store(0, Ordering::Relaxed);
         self.log_counter.store(0, Ordering::Relaxed);
-        self.recovery_mode.store(1, Ordering::Relaxed);
-        self.electrical_angle_bits
-            .store(0.0f32.to_bits(), Ordering::Relaxed);
         // 逆回転フラグは保持（FOCに戻った時の方向を維持）
     }
 
@@ -333,64 +261,6 @@ impl OpenLoopCounters {
     pub fn set_reverse(&self, reverse: bool) {
         self.reverse_flag
             .store(if reverse { 1 } else { 0 }, Ordering::Relaxed);
-    }
-
-    /// 逆回転かどうかを取得
-    #[inline(always)]
-    pub fn is_reverse(&self) -> bool {
-        self.reverse_flag.load(Ordering::Relaxed) != 0
-    }
-
-    /// 電気角をインクリメントし、新しい電気角を返す
-    ///
-    /// 時間ベースで電気角を進める（SVPWMベース強制転流用）
-    /// 逆回転時は電気角を逆方向に進める
-    #[inline(always)]
-    pub fn increment_angle(&self, dt: f32, reverse: bool) -> f32 {
-        use core::f32::consts::TAU;
-
-        // 現在の電気角を取得
-        let current_angle = f32::from_bits(self.electrical_angle_bits.load(Ordering::Relaxed));
-
-        // 電気角を進める（逆回転時は逆方向）
-        let delta_angle = if reverse {
-            -OPENLOOP_ANGULAR_VELOCITY * dt
-        } else {
-            OPENLOOP_ANGULAR_VELOCITY * dt
-        };
-        let mut new_angle = current_angle + delta_angle;
-
-        // 0〜2πに正規化
-        while new_angle >= TAU {
-            new_angle -= TAU;
-        }
-        while new_angle < 0.0 {
-            new_angle += TAU;
-        }
-
-        // 更新
-        self.electrical_angle_bits
-            .store(new_angle.to_bits(), Ordering::Relaxed);
-
-        new_angle
-    }
-
-    /// 理論速度を取得 [RPM]
-    /// 逆回転時は負の値を返す
-    #[inline(always)]
-    pub fn get_theoretical_rpm(&self, reverse: bool) -> f32 {
-        // 電気角速度から機械速度を計算
-        // ω_mech = ω_elec / pole_pairs
-        // RPM = ω_mech * 60 / 2π
-        use crate::config::motor::DEFAULT_POLE_PAIRS;
-        use core::f32::consts::TAU;
-
-        let rpm = OPENLOOP_ANGULAR_VELOCITY / (DEFAULT_POLE_PAIRS as f32) * 60.0 / TAU;
-        if reverse {
-            -rpm
-        } else {
-            rpm
-        }
     }
 }
 

@@ -8,6 +8,7 @@
 use libm::sqrtf;
 
 /// Flux weakening controller
+#[derive(Debug, Clone)]
 pub struct FluxWeakeningController {
     /// Control enabled/disabled
     enabled: bool,

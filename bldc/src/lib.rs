@@ -16,7 +16,7 @@
 //! The library is organized into several modules:
 //!
 //! - [`traits`]: Hardware abstraction traits (PositionSensor, SpeedSensor, PwmOutput, etc.)
-//! - [`control`]: Control algorithms (PI controller, FOC, six-step)
+//! - [`control`]: Control algorithms (PI controller, FOC, open-loop, speed ramp, stall detector)
 //! - [`modulation`]: PWM modulation strategies (SVPWM)
 //! - [`sensors`]: Sensor processing algorithms (Hall sensor)
 //! - [`transforms`]: Coordinate transformations (Park, Clarke)
@@ -27,18 +27,21 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use bldc::control::PiController;
-//! use bldc::modulation::svpwm;
-//! use bldc::transforms::{inverse_park, limit_voltage};
+//! use bldc::control::{FocController, FocConfig};
+//! use bldc::control::stall_detector::StallDetectorConfig;
 //!
-//! // Create a PI controller for speed control
-//! let mut speed_pi = PiController::new_symmetric(0.5, 0.05, 24.0);
+//! // Create a FOC controller with all features
+//! let mut controller = FocController::builder(FocConfig::default())
+//!     .with_stall_detection(StallDetectorConfig::default())
+//!     .build();
 //!
 //! // In your control loop:
-//! let vq = speed_pi.update(target_speed, measured_speed, dt);
-//! let (vd, vq) = limit_voltage(0.0, vq, max_voltage);
-//! let (v_alpha, v_beta) = inverse_park(vd, vq, electrical_angle);
-//! let (du, dv, dw) = svpwm::calculate(v_alpha, v_beta, v_dc, max_duty);
+//! controller.set_target_speed_rpm(1000.0);
+//! let output = controller.update_extended(measured_speed, electrical_angle, dt);
+//!
+//! if output.is_stalled {
+//!     // Handle stall condition
+//! }
 //! ```
 
 #![no_std]
@@ -57,6 +60,9 @@ pub mod transforms;
 
 // Re-export commonly used types
 pub use compensation::{DeadTimeCompensation, FluxWeakeningController};
-pub use control::PiController;
+pub use control::{
+    FocConfig, FocController, FocOutput, OpenLoopConfig, OpenLoopController, OpenLoopOutput,
+    OpenLoopPhase, PiController, SpeedRamp, StallDetector, StallDetectorConfig,
+};
 pub use position::ShaftPosition;
 pub use traits::{CurrentSensor, HallStateReader, PositionSensor, PwmDuty, PwmOutput, SpeedSensor};

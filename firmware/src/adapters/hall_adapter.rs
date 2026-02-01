@@ -8,6 +8,8 @@ use bldc::traits::{HallStateReader, PositionSensor, SpeedSensor};
 use crate::config::advance_angle::{
     BASE_ADVANCE_DEG, MAX_ADVANCE_DEG, MAX_SPEED_FOR_ADVANCE, MIN_SPEED_FOR_ADVANCE,
 };
+
+// Note: advance_angle config imports are used by HallConfig initialization
 use crate::hall_tim;
 
 /// Hall sensor adapter that combines TIM4 hardware with bldc processing
@@ -146,20 +148,6 @@ impl HallSensorAdapter {
     #[allow(dead_code)]
     pub fn set_filter_alpha(&mut self, alpha: f32) {
         self.processor.set_filter_alpha(alpha);
-    }
-
-    /// Get current advance angle in degrees based on current speed
-    pub fn get_current_advance_deg(&self) -> f32 {
-        let speed_rpm = self.last_result.speed_rpm;
-        if speed_rpm <= MIN_SPEED_FOR_ADVANCE {
-            return BASE_ADVANCE_DEG;
-        }
-
-        let speed_ratio = ((speed_rpm - MIN_SPEED_FOR_ADVANCE)
-            / (MAX_SPEED_FOR_ADVANCE - MIN_SPEED_FOR_ADVANCE))
-            .clamp(0.0, 1.0);
-
-        BASE_ADVANCE_DEG + (MAX_ADVANCE_DEG - BASE_ADVANCE_DEG) * speed_ratio
     }
 
     /// Get pole pairs

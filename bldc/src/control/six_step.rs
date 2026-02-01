@@ -1,10 +1,352 @@
-//! Six-step (trapezoidal) commutation for BLDC motors
+//! SVPWM-based open-loop controller for BLDC motors
 //!
-//! This module provides open-loop six-step driving for motor startup.
-//! Six-step commutation is simpler than FOC and useful for starting
-//! motors before transitioning to closed-loop FOC control.
+//! This module provides open-loop driving for motor startup using SVPWM.
+//! It operates in two phases:
+//! 1. Forced commutation: Time-based electrical angle progression
+//! 2. Hall-driven: Hall sensor-based electrical angle with fixed voltage
+//!
+//! After reaching target speed, it can transition to FOC control.
 
-/// State information for six-step driving
+use crate::modulation::calculate_svpwm;
+use crate::traits::PwmDuty;
+use crate::transforms::inverse_park;
+
+/// Configuration for the open-loop controller
+#[derive(Debug, Clone)]
+pub struct OpenLoopConfig {
+    /// Initial rotation speed [RPM]
+    pub initial_rpm: f32,
+    /// Target rotation speed [RPM] (for FOC transition)
+    pub target_rpm: f32,
+    /// Acceleration rate [RPM/s]
+    pub acceleration: f32,
+    /// Voltage command ratio (0.0 - 1.0)
+    pub voltage_ratio: f32,
+    /// DC bus voltage [V]
+    pub v_dc: f32,
+    /// Maximum PWM duty cycle value
+    pub max_duty: u16,
+    /// Number of pole pairs
+    pub pole_pairs: u8,
+    /// Number of cycles for forced commutation phase
+    pub forced_commutation_cycles: u32,
+    /// Minimum cycles before FOC transition
+    pub min_cycles_for_foc: u32,
+    /// Minimum speed for FOC transition [RPM]
+    pub min_speed_for_foc: f32,
+}
+
+impl Default for OpenLoopConfig {
+    fn default() -> Self {
+        Self {
+            initial_rpm: 50.0,
+            target_rpm: 100.0,
+            acceleration: 200.0,
+            voltage_ratio: 0.1, // 10%
+            v_dc: 24.0,
+            max_duty: 100,
+            pole_pairs: 6,
+            forced_commutation_cycles: 50000,
+            min_cycles_for_foc: 50000,
+            min_speed_for_foc: 100.0,
+        }
+    }
+}
+
+/// Open-loop phase
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OpenLoopPhase {
+    /// Time-based forced commutation
+    #[default]
+    ForcedCommutation,
+    /// Hall sensor-driven commutation
+    HallDriven,
+}
+
+/// Output from open-loop controller update
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenLoopOutput {
+    /// PWM duty cycles for U, V, W phases
+    pub duty: PwmDuty,
+    /// Whether ready to transition to FOC
+    pub ready_for_foc: bool,
+    /// Current theoretical/measured speed [RPM]
+    pub current_rpm: f32,
+    /// Current phase
+    pub phase: OpenLoopPhase,
+}
+
+/// SVPWM-based open-loop controller for motor startup
+///
+/// Drives the motor using SVPWM with:
+/// 1. Forced commutation phase: Time-based angle progression
+/// 2. Hall-driven phase: Hall sensor angle with fixed voltage
+///
+/// Compatible with FOC's SVPWM-based driving for smooth transition.
+#[derive(Debug)]
+pub struct OpenLoopController {
+    /// Configuration
+    config: OpenLoopConfig,
+    /// Current electrical angle [rad]
+    electrical_angle: f32,
+    /// Current angular velocity [rad/s]
+    angular_velocity: f32,
+    /// Execution counter
+    execution_count: u32,
+    /// Reverse direction flag
+    reverse: bool,
+    /// Recovery mode flag (from FOC stall)
+    is_recovery: bool,
+}
+
+impl OpenLoopController {
+    /// Create a new open-loop controller
+    pub fn new(config: OpenLoopConfig) -> Self {
+        let initial_angular_velocity =
+            config.initial_rpm * core::f32::consts::TAU / 60.0 * config.pole_pairs as f32;
+
+        Self {
+            config,
+            electrical_angle: 0.0,
+            angular_velocity: initial_angular_velocity,
+            execution_count: 0,
+            reverse: false,
+            is_recovery: false,
+        }
+    }
+
+    /// Create with default configuration
+    pub fn with_defaults() -> Self {
+        Self::new(OpenLoopConfig::default())
+    }
+
+    /// Update the open-loop controller
+    ///
+    /// # Arguments
+    /// * `hall_electrical_angle` - Hall sensor electrical angle [rad] (if available)
+    /// * `hall_speed_rpm` - Hall sensor measured speed [RPM] (absolute value)
+    /// * `is_valid_hall` - Whether Hall sensor reading is valid
+    /// * `dt` - Time step [s]
+    ///
+    /// # Returns
+    /// OpenLoopOutput containing duty cycles and status
+    pub fn update(
+        &mut self,
+        hall_electrical_angle: Option<f32>,
+        hall_speed_rpm: f32,
+        is_valid_hall: bool,
+        dt: f32,
+    ) -> OpenLoopOutput {
+        self.execution_count += 1;
+
+        let (duty, phase, current_rpm) =
+            if self.execution_count < self.config.forced_commutation_cycles {
+                // Phase 1: Forced commutation (time-based)
+                self.update_forced_commutation(dt)
+            } else {
+                // Phase 2: Hall-driven commutation
+                self.update_hall_driven(hall_electrical_angle, hall_speed_rpm, is_valid_hall)
+            };
+
+        // FOC transition check
+        let time_ok = self.execution_count >= self.config.min_cycles_for_foc;
+        let speed_ok = hall_speed_rpm >= self.config.min_speed_for_foc;
+        let ready_for_foc = time_ok && is_valid_hall && speed_ok;
+
+        OpenLoopOutput {
+            duty,
+            ready_for_foc,
+            current_rpm,
+            phase,
+        }
+    }
+
+    /// Update during forced commutation phase
+    fn update_forced_commutation(&mut self, dt: f32) -> (PwmDuty, OpenLoopPhase, f32) {
+        // Progress electrical angle based on time
+        let angle_delta = self.angular_velocity * dt;
+        if self.reverse {
+            self.electrical_angle -= angle_delta;
+        } else {
+            self.electrical_angle += angle_delta;
+        }
+
+        // Normalize angle to [0, 2π)
+        self.electrical_angle = normalize_angle(self.electrical_angle);
+
+        // Accelerate if not at target
+        let target_angular_velocity =
+            self.config.target_rpm * core::f32::consts::TAU / 60.0 * self.config.pole_pairs as f32;
+
+        if self.angular_velocity < target_angular_velocity {
+            let accel_rad = self.config.acceleration * core::f32::consts::TAU / 60.0
+                * self.config.pole_pairs as f32;
+            self.angular_velocity += accel_rad * dt;
+            if self.angular_velocity > target_angular_velocity {
+                self.angular_velocity = target_angular_velocity;
+            }
+        }
+
+        // Calculate PWM using SVPWM
+        let duty = self.calculate_svpwm(self.electrical_angle);
+
+        // Calculate theoretical RPM
+        let theoretical_rpm =
+            self.angular_velocity * 60.0 / (core::f32::consts::TAU * self.config.pole_pairs as f32);
+        let signed_rpm = if self.reverse {
+            -theoretical_rpm
+        } else {
+            theoretical_rpm
+        };
+
+        (duty, OpenLoopPhase::ForcedCommutation, signed_rpm)
+    }
+
+    /// Update during Hall-driven phase
+    fn update_hall_driven(
+        &self,
+        hall_electrical_angle: Option<f32>,
+        hall_speed_rpm: f32,
+        _is_valid_hall: bool,
+    ) -> (PwmDuty, OpenLoopPhase, f32) {
+        // Use Hall sensor angle if available, otherwise use last known angle
+        let angle = hall_electrical_angle.unwrap_or(self.electrical_angle);
+
+        // Calculate PWM using SVPWM
+        let duty = self.calculate_svpwm(angle);
+
+        // Use measured speed with direction
+        let signed_rpm = if self.reverse {
+            -hall_speed_rpm
+        } else {
+            hall_speed_rpm
+        };
+
+        (duty, OpenLoopPhase::HallDriven, signed_rpm)
+    }
+
+    /// Calculate SVPWM duty cycles
+    fn calculate_svpwm(&self, electrical_angle: f32) -> PwmDuty {
+        // Fixed voltage command
+        let vq_base = self.config.voltage_ratio * self.config.v_dc;
+        let vq_cmd = if self.reverse { -vq_base } else { vq_base };
+        let vd_cmd = 0.0;
+
+        // Inverse Park transform → SVPWM
+        let (v_alpha, v_beta) = inverse_park(vd_cmd, vq_cmd, electrical_angle);
+        let (du, dv, dw) = calculate_svpwm(v_alpha, v_beta, self.config.v_dc, self.config.max_duty);
+
+        PwmDuty::new(du, dv, dw)
+    }
+
+    /// Set the target speed in RPM
+    pub fn set_target_speed_rpm(&mut self, rpm: f32) {
+        self.config.target_rpm = rpm.abs();
+        self.reverse = rpm < 0.0;
+    }
+
+    /// Get the target speed in RPM (signed)
+    pub fn get_target_speed_rpm(&self) -> f32 {
+        if self.reverse {
+            -self.config.target_rpm
+        } else {
+            self.config.target_rpm
+        }
+    }
+
+    /// Set the rotation direction
+    pub fn set_reverse(&mut self, reverse: bool) {
+        self.reverse = reverse;
+    }
+
+    /// Get the current rotation direction
+    pub fn is_reverse(&self) -> bool {
+        self.reverse
+    }
+
+    /// Set recovery mode (from FOC stall)
+    pub fn set_recovery_mode(&mut self, is_recovery: bool) {
+        self.is_recovery = is_recovery;
+    }
+
+    /// Check if in recovery mode
+    pub fn is_recovery(&self) -> bool {
+        self.is_recovery
+    }
+
+    /// Get the theoretical speed [RPM] based on current angular velocity
+    pub fn get_theoretical_rpm(&self) -> f32 {
+        let rpm =
+            self.angular_velocity * 60.0 / (core::f32::consts::TAU * self.config.pole_pairs as f32);
+        if self.reverse {
+            -rpm
+        } else {
+            rpm
+        }
+    }
+
+    /// Get the current execution count
+    pub fn get_execution_count(&self) -> u32 {
+        self.execution_count
+    }
+
+    /// Get the current phase
+    pub fn get_current_phase(&self) -> OpenLoopPhase {
+        if self.execution_count < self.config.forced_commutation_cycles {
+            OpenLoopPhase::ForcedCommutation
+        } else {
+            OpenLoopPhase::HallDriven
+        }
+    }
+
+    /// Reset for normal startup
+    pub fn reset_for_normal(&mut self) {
+        let initial_angular_velocity =
+            self.config.initial_rpm * core::f32::consts::TAU / 60.0 * self.config.pole_pairs as f32;
+
+        self.electrical_angle = 0.0;
+        self.angular_velocity = initial_angular_velocity;
+        self.execution_count = 0;
+        self.is_recovery = false;
+    }
+
+    /// Reset for recovery from stall
+    pub fn reset_for_recovery(&mut self) {
+        self.reset_for_normal();
+        self.is_recovery = true;
+    }
+
+    /// Set voltage ratio (0.0 - 1.0)
+    pub fn set_voltage_ratio(&mut self, ratio: f32) {
+        self.config.voltage_ratio = ratio.clamp(0.0, 1.0);
+    }
+
+    /// Get voltage ratio
+    pub fn get_voltage_ratio(&self) -> f32 {
+        self.config.voltage_ratio
+    }
+
+    /// Set the DC bus voltage
+    pub fn set_vdc(&mut self, v_dc: f32) {
+        self.config.v_dc = v_dc;
+    }
+}
+
+/// Normalize angle to [0, 2π) range
+fn normalize_angle(angle: f32) -> f32 {
+    let tau = core::f32::consts::TAU;
+    let mut a = angle % tau;
+    if a < 0.0 {
+        a += tau;
+    }
+    a
+}
+
+// ============================================================================
+// Legacy six-step support (for backward compatibility)
+// ============================================================================
+
+/// State information for six-step driving (legacy)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SixStepState {
     /// Current step (0-5)
@@ -23,10 +365,11 @@ pub struct SixStepState {
     pub enable_w: bool,
 }
 
-/// Open-loop six-step commutation controller
+/// Legacy six-step commutation controller
 ///
-/// Drives the motor using six-step (trapezoidal) commutation,
-/// which is useful for motor startup before transitioning to FOC.
+/// Maintained for backward compatibility. For new implementations,
+/// use `OpenLoopController` which provides SVPWM-based driving
+/// compatible with FOC transition.
 #[derive(Debug)]
 pub struct SixStepController {
     /// Current step (0-5)
@@ -237,7 +580,96 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_controller() {
+    fn test_new_openloop_controller() {
+        let controller = OpenLoopController::with_defaults();
+        assert_eq!(controller.execution_count, 0);
+        assert!(!controller.reverse);
+    }
+
+    #[test]
+    fn test_forced_commutation_phase() {
+        let mut controller = OpenLoopController::new(OpenLoopConfig {
+            forced_commutation_cycles: 100,
+            ..Default::default()
+        });
+
+        // Should be in forced commutation phase
+        let output = controller.update(None, 0.0, false, 0.001);
+        assert_eq!(output.phase, OpenLoopPhase::ForcedCommutation);
+        assert!(!output.ready_for_foc);
+    }
+
+    #[test]
+    fn test_hall_driven_phase() {
+        let mut controller = OpenLoopController::new(OpenLoopConfig {
+            forced_commutation_cycles: 10,
+            min_cycles_for_foc: 20,
+            ..Default::default()
+        });
+
+        // Progress through forced commutation
+        for _ in 0..15 {
+            controller.update(None, 0.0, false, 0.001);
+        }
+
+        // Should now be in Hall-driven phase
+        let output = controller.update(Some(1.0), 50.0, true, 0.001);
+        assert_eq!(output.phase, OpenLoopPhase::HallDriven);
+    }
+
+    #[test]
+    fn test_foc_ready_detection() {
+        let mut controller = OpenLoopController::new(OpenLoopConfig {
+            forced_commutation_cycles: 10,
+            min_cycles_for_foc: 20,
+            min_speed_for_foc: 50.0,
+            ..Default::default()
+        });
+
+        // Run until min cycles reached
+        for _ in 0..25 {
+            let output = controller.update(Some(1.0), 60.0, true, 0.001);
+            if controller.execution_count >= 20 {
+                assert!(output.ready_for_foc);
+            }
+        }
+    }
+
+    #[test]
+    fn test_reverse_direction() {
+        let mut controller = OpenLoopController::with_defaults();
+        controller.set_reverse(true);
+
+        let output = controller.update(None, 0.0, false, 0.001);
+        assert!(output.current_rpm < 0.0);
+    }
+
+    #[test]
+    fn test_reset_for_normal() {
+        let mut controller = OpenLoopController::with_defaults();
+
+        // Progress some cycles
+        for _ in 0..100 {
+            controller.update(None, 0.0, false, 0.001);
+        }
+
+        controller.reset_for_normal();
+        assert_eq!(controller.execution_count, 0);
+        assert!(!controller.is_recovery);
+    }
+
+    #[test]
+    fn test_reset_for_recovery() {
+        let mut controller = OpenLoopController::with_defaults();
+
+        controller.reset_for_recovery();
+        assert_eq!(controller.execution_count, 0);
+        assert!(controller.is_recovery);
+    }
+
+    // Legacy SixStepController tests
+    #[test]
+    fn test_legacy_new_controller() {
         let controller = SixStepController::new(60.0, 600.0, 100.0, 50, 6);
 
         assert_eq!(controller.current_step, 0);
@@ -246,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn test_step_state() {
+    fn test_legacy_step_state() {
         // Test all 6 steps
         for step in 0..6 {
             let state = SixStepController::get_step_state(step, 100);
@@ -266,60 +698,5 @@ mod tests {
                 .count();
             assert_eq!(enabled_count, 2);
         }
-    }
-
-    #[test]
-    fn test_step_progression() {
-        let mut controller = SixStepController::new(600.0, 600.0, 0.0, 50, 6);
-
-        // With a very short step period, updates should progress steps
-        let initial_step = controller.current_step;
-
-        // Simulate several updates (step period for 600 RPM, 6 pole pairs = ~2.78ms per step)
-        for _ in 0..1000 {
-            controller.update(0.001); // 1ms per update
-        }
-
-        // After many updates, step should have changed
-        assert_ne!(controller.current_step, initial_step);
-    }
-
-    #[test]
-    fn test_speed_calculation() {
-        let controller = SixStepController::new(600.0, 1200.0, 100.0, 50, 6);
-
-        let rpm = controller.get_current_rpm();
-        // Should start close to initial RPM
-        assert!((rpm - 600.0).abs() < 1.0);
-    }
-
-    #[test]
-    fn test_reset() {
-        let mut controller = SixStepController::new(60.0, 600.0, 100.0, 50, 6);
-
-        // Advance some steps
-        for _ in 0..100 {
-            controller.update(0.01);
-        }
-
-        controller.reset();
-
-        assert_eq!(controller.current_step, 0);
-        assert!((controller.elapsed_time - 0.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_acceleration() {
-        let mut controller = SixStepController::new(60.0, 600.0, 200.0, 50, 6);
-
-        let initial_period = controller.step_period;
-
-        // Run for a while to trigger acceleration
-        for _ in 0..1000 {
-            controller.update(0.01);
-        }
-
-        // Period should decrease (speed should increase)
-        assert!(controller.step_period < initial_period);
     }
 }

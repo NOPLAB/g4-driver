@@ -13,7 +13,7 @@ use bldc::modulation::calculate_svpwm;
 use bldc::transforms::inverse_park;
 
 use crate::state;
-use crate::state::ControlMode;
+use crate::state::{ControlMode, RUNTIME};
 
 use super::mode::{ModeContext, ModeResult};
 
@@ -59,8 +59,11 @@ async fn execute_calibration_internal(ctx: &mut ModeContext<'_>) -> ModeResult {
     let dt = ctx.dt;
 
     // Hall センサーを更新して現在の角度を取得
-    let (_electrical_angle, _speed_rpm, _hall_state) = hall_sensor.update(dt);
+    let (electrical_angle_raw, speed_rpm, _hall_state) = hall_sensor.update(dt);
     let sensor_angle = hall_sensor.get_mechanical_angle();
+
+    // ステータス更新（CAN送信用）
+    RUNTIME.status.update(speed_rpm, electrical_angle_raw);
 
     // デバッグ：Hall状態と角度を定期的にログ出力（10000サイクルごと = 1秒 @ 10kHz）
     let count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);

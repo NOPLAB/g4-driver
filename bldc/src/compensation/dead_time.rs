@@ -7,6 +7,7 @@
 use libm::sinf;
 
 /// Dead time compensator
+#[derive(Debug, Clone)]
 pub struct DeadTimeCompensation {
     /// Compensation enabled/disabled
     enabled: bool,
