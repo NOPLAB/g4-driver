@@ -77,7 +77,7 @@ impl CalibrationParams {
     pub const fn new() -> Self {
         Self {
             request: true,
-            torque: 10,
+            torque: 5,
             result: CalibrationResult {
                 electrical_offset: 0.0,
                 direction_inversed: false,
