@@ -9,7 +9,6 @@ mod mode;
 mod openloop_mode;
 mod resources;
 
-use embassy_stm32::{peripherals, timer::complementary_pwm::ComplementaryPwm};
 use embassy_time::{Duration, Timer};
 
 use crate::config::{control, motor, pwm};
@@ -149,14 +148,11 @@ impl MotorController {
 
 /// モーター制御タスク（10kHz FOC制御ループ）
 #[embassy_executor::task]
-pub async fn motor_control_task(uvw_pwm: ComplementaryPwm<'static, peripherals::TIM1>) {
+pub async fn motor_control_task(motor_driver: MotorDriver) {
     // 電源投入後、ハードウェア安定待ち
     Timer::after(Duration::from_millis(500)).await;
 
     info!("Motor control task started (OpenLoop + FOC mode)");
-
-    // モータードライバー初期化
-    let motor_driver = MotorDriver::new(uvw_pwm);
 
     // 制御周期
     let dt = control::DEFAULT_PERIOD_US as f32 / 1_000_000.0;

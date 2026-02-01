@@ -8,6 +8,8 @@ use embassy_stm32::{
     timer::{complementary_pwm::ComplementaryPwm, Channel},
 };
 
+use crate::gate_driver::BootstrapChargeable;
+
 /// 3相モータードライバー
 ///
 /// STM32のComplementaryPwmを使用して3相ブラシレスモーターを駆動します。
@@ -87,5 +89,25 @@ impl MotorDriver {
         } else {
             self.pwm.disable(Channel::Ch3);
         }
+    }
+}
+
+impl BootstrapChargeable for MotorDriver {
+    /// 全ローサイドをON、ハイサイドをOFF
+    ///
+    /// 補完PWMでDuty=max_dutyに設定すると：
+    /// - ハイサイド(INHx): OFF
+    /// - ローサイド(INLx): ON
+    ///
+    /// これによりブートストラップコンデンサが充電される
+    fn set_all_low_side_on(&mut self) {
+        self.set_duty_uvw(self.max_duty, self.max_duty, self.max_duty);
+        self.enable_all_channels();
+    }
+
+    /// 全チャネルをOFF
+    fn set_all_off(&mut self) {
+        self.set_duty_uvw(0, 0, 0);
+        self.disable_all_channels();
     }
 }

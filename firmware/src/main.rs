@@ -4,6 +4,7 @@
 mod adapters;
 mod config;
 mod fmt;
+mod gate_driver;
 mod hall_tim;
 mod hardware;
 mod init;
@@ -32,6 +33,7 @@ use embassy_stm32::{
 use embassy_time::{Duration, Timer};
 
 use fmt::*;
+use gate_driver::{bootstrap_charge, GateDriver};
 use hardware::Irqs;
 use init::ConfigLoader;
 use tasks::{can_task, led_task, motor_control_task, voltage_monitor_task};
@@ -67,6 +69,17 @@ async fn main(spawner: Spawner) {
 
     // Flash/CRCをcan_task用に取得（Peripherals::steal()を使わずに所有権を移譲）
     let (flash, crc) = config_loader.into_peripherals();
+
+    // ドライバーイネーブルピン（PE7: Active High）
+    let _driver_enable = Output::new(p.PE7, Level::High, Speed::Low);
+    info!("Driver enable pin (PE7) set HIGH");
+
+    // ゲートドライバーIC初期化（I2C3経由）
+    let mut gate_driver = GateDriver::new(p.I2C3, p.PC8, p.PC9, p.PE14, p.PE15);
+    if let Err(e) = gate_driver.initialize().await {
+        error!("Gate driver initialization failed: {:?}", e);
+        // エラー時は初期化を続行（デバッグ用）
+    }
 
     // LED初期化＆タスク起動
     let led1 = Output::new(p.PC13, Level::High, Speed::Low);
@@ -147,6 +160,10 @@ async fn main(spawner: Spawner) {
     uvw_pwm.enable(Channel::Ch2);
     uvw_pwm.enable(Channel::Ch3);
 
+    // モータードライバー作成＆ブートストラップ充電
+    let mut motor_driver = motor_driver::MotorDriver::new(uvw_pwm);
+    bootstrap_charge(&mut motor_driver).await;
+
     // TIM4 Hallセンサーインターフェース初期化
     unsafe {
         hardware::init_hall_sensor();
@@ -155,7 +172,7 @@ async fn main(spawner: Spawner) {
     info!("Starting FOC motor control...");
 
     // モーター制御タスクを起動
-    if spawner.spawn(motor_control_task(uvw_pwm)).is_err() {
+    if spawner.spawn(motor_control_task(motor_driver)).is_err() {
         error!("Failed to spawn motor_control_task - CRITICAL");
     }
 
