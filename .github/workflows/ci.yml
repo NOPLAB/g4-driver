@@ -33,7 +33,7 @@ jobs:
           targets: thumbv7em-none-eabi
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (workspace)
-        run: cargo clippy --workspace --exclude g4-driver-firmware -- -D warnings
+        run: cargo clippy --workspace --exclude g4-driver-firmware --all-targets --all-features -- -D warnings
       - name: Clippy (firmware)
         run: cargo clippy --package g4-driver-firmware --target thumbv7em-none-eabi -- -D warnings
 
