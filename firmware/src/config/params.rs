@@ -30,8 +30,8 @@ pub mod motor {
 
 /// 制御周期パラメータ
 pub mod control {
-    /// 制御周期 [μs]（50kHz = 20μs）
-    pub const DEFAULT_PERIOD_US: u64 = 20;
+    /// 制御周期 [μs]（20kHz = 50μs）
+    pub const DEFAULT_PERIOD_US: u64 = 50;
 }
 
 // =============================================================================
@@ -46,8 +46,8 @@ pub mod speed {
     /// 積分ゲイン Ki（発振抑制のため低めに設定）
     pub const DEFAULT_KI: f32 = 0.02;
 
-    /// 速度フィルタ係数 α（0.10: 応答性と安定性のバランス）
-    pub const DEFAULT_FILTER_ALPHA: f32 = 0.10;
+    /// 速度フィルタ係数 α（0.05: ノイズ耐性を優先、応答性は低下）
+    pub const DEFAULT_FILTER_ALPHA: f32 = 0.05;
 
     /// 速度指令の最大加速度 [RPM/s]（200 RPM/sで緩やかな加速、PI制御の安定化）
     pub const MAX_ACCELERATION: f32 = 500.0;

@@ -89,9 +89,15 @@ pub unsafe fn init_hall_timer() {
     // 5. Input Capture設定（CH1でキャプチャ）
     // CCMR1_Input: CC1S=TRC (IC1はTRCにマップ = TI1にマップ)、IC1F (フィルタ設定)
     // 参照: TIM_TI1_SetConfig(..., TIM_ICSELECTION_TRC, ...)
+    //
+    // フィルタ設定について:
+    // - FCK_INT_N8 (0011): 8サイクル @ 170MHz = 約47ns（元の設定、ノイズに弱い）
+    // - FDTS_DIV16_N8 (1100): 8サイクル @ (170MHz/16) = 約752ns
+    // - FDTS_DIV32_N8 (1111): 8サイクル @ (170MHz/32) = 約1.5μs（最大フィルタ）
+    // より長いパルスのみ有効と判定することで、短いノイズパルスを除去
     tim4.ccmr_input(0).modify(|w| {
         w.set_ccs(0, pac::timer::vals::CcmrInputCcs::TRC); // CC1S = TRC (IC1 -> TI1/TRC)
-        w.set_icf(0, pac::timer::vals::FilterValue::FCK_INT_N8); // IC1F = 0011 (8サイクルフィルタ)
+        w.set_icf(0, pac::timer::vals::FilterValue::FDTS_DIV32_N8); // IC1F = 1111 (最大フィルタ)
     });
 
     // 6. CCER: CC1E=1（キャプチャ有効）、立ち上がりエッジのみ

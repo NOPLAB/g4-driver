@@ -53,7 +53,7 @@ impl ControlParams {
     /// デフォルト値で新しい制御パラメータを作成
     pub const fn new() -> Self {
         Self {
-            target_speed: 1000.0,
+            target_speed: 1500.0,
             pi_gains: (speed::DEFAULT_KP, speed::DEFAULT_KI),
             enabled: true,
             control_mode: ControlMode::OpenLoop,

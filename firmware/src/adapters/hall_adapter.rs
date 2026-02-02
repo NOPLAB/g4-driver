@@ -18,6 +18,8 @@ pub struct HallSensorAdapter {
     processor: HallProcessor,
     /// Last processed result
     last_result: HallResult,
+    /// Last valid Hall state (for noise filtering)
+    last_valid_hall_state: u8,
     /// Number of pole pairs (cached for speed calculation)
     pole_pairs: u8,
 }
@@ -45,6 +47,7 @@ impl HallSensorAdapter {
         Self {
             processor: HallProcessor::new(config),
             last_result: HallResult::default(),
+            last_valid_hall_state: 1, // Default to a valid state
             pole_pairs,
         }
     }
@@ -59,9 +62,19 @@ impl HallSensorAdapter {
     ///
     /// # Returns
     /// Tuple of (electrical_angle, speed_rpm, hall_state)
+    /// Note: Invalid Hall states (0, 7) are filtered as noise; last valid state is returned
     pub fn update(&mut self, dt: f32) -> (f32, f32, u8) {
         // Read consistent snapshot from TIM4 hardware (sequence-locked)
-        let (hall_state, period_cycles, is_timeout) = get_snapshot();
+        let (raw_hall_state, period_cycles, is_timeout) = get_snapshot();
+
+        // Filter noise: states 0 and 7 are invalid, use last valid state
+        let hall_state = if (1..=6).contains(&raw_hall_state) {
+            self.last_valid_hall_state = raw_hall_state;
+            raw_hall_state
+        } else {
+            // Use last valid state instead of invalid noise
+            self.last_valid_hall_state
+        };
 
         // Calculate instantaneous speed from TIM4 period
         let instant_rpm = if !is_timeout && period_cycles > 0 {

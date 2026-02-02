@@ -117,7 +117,7 @@ pub async fn can_task(
                                 let torque = if !data.is_empty() {
                                     data[0].min(100) // 0-100に制限
                                 } else {
-                                    20 // デフォルト値
+                                    3 // デフォルト値
                                 };
                                 info!("Calibration torque: {}", torque);
                                 {
