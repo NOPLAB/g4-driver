@@ -10,6 +10,12 @@ use crate::control::PiController;
 use crate::modulation::calculate_svpwm;
 use crate::traits::PwmDuty;
 use crate::transforms::{inverse_park, limit_voltage};
+use core::f32::consts::TAU;
+
+/// Conversion factor from RPM to rad/s: TAU / 60
+const RPM_TO_RAD_S: f32 = TAU / 60.0;
+/// Conversion factor from rad/s to RPM: 60 / TAU
+const RAD_S_TO_RPM: f32 = 60.0 / TAU;
 
 /// Configuration for the FOC controller
 #[derive(Debug, Clone)]
@@ -301,7 +307,7 @@ impl FocController {
     /// # Arguments
     /// * `rpm` - Target speed in RPM
     pub fn set_target_speed_rpm(&mut self, rpm: f32) {
-        self.target_speed = rpm;
+        self.target_speed = rpm * RPM_TO_RAD_S;
     }
 
     /// Get the current target speed in rad/s
@@ -313,7 +319,7 @@ impl FocController {
     /// Get the current target speed in RPM
     #[allow(dead_code)]
     pub fn get_target_speed_rpm(&self) -> f32 {
-        self.target_speed
+        self.target_speed * RAD_S_TO_RPM
     }
 
     /// Set the PI controller gains
