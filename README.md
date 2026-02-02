@@ -1,4 +1,7 @@
 # g4-driver
+
+[![CI](https://github.com/NOPLAB/g4-driver/actions/workflows/ci.yml/badge.svg)](https://github.com/NOPLAB/g4-driver/actions/workflows/ci.yml)
+
 BLDC Driver with STSPIN32G4
 
 ## Documentation

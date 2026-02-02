@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (libraries)
+        run: cargo clippy --package bldc --package bldc-sim --package g4-driver-protocol -- -D warnings
+      - name: Clippy (controller)
+        run: cargo clippy --package g4-driver-controller -- -D warnings
+      - name: Clippy (firmware)
+        run: cargo clippy --package g4-driver-firmware --target thumbv7em-none-eabi -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (libraries)
+        run: cargo test --package bldc --package bldc-sim --package g4-driver-protocol
+      - name: Test (controller)
+        run: cargo test --package g4-driver-controller
+
+  build-firmware:
+    name: Build Firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (debug)
+        run: cargo build --package g4-driver-firmware --target thumbv7em-none-eabi
+      - name: Build (release)
+        run: cargo build --package g4-driver-firmware --target thumbv7em-none-eabi --release

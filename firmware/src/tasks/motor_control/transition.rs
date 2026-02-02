@@ -2,6 +2,10 @@
 //!
 //! 遷移に必要なデータを型で明示し、遷移ロジックを一箇所に集約します。
 
+// defmtマクロは異なる文字列でも同じバイナリコードになるため、
+// Clippyがif_same_then_elseを誤検出する
+#![allow(clippy::if_same_then_else)]
+
 use crate::fmt::*;
 
 use super::hardware::Hardware;

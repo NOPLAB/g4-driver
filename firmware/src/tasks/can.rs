@@ -2,6 +2,10 @@
 //!
 //! モーター制御コマンドの受信とステータス送信を行います。
 
+// defmtマクロは異なる文字列でも同じバイナリコードになるため、
+// Clippyがif_same_then_elseを誤検出する
+#![allow(clippy::if_same_then_else)]
+
 use embassy_stm32::{
     can::{self, frame::Frame},
     crc::Crc,
