@@ -35,28 +35,33 @@ pub struct MotorParams {
 }
 
 impl MotorParams {
-    /// Create motor parameters with typical values for a small BLDC motor
-    /// Suitable for validation against the g4-driver hardware
+    /// Create motor parameters based on Maxon EC-i 40 100W 48V
+    /// High-precision brushless DC motor with Hall sensors
+    /// Datasheet: https://www.maxongroup.com/maxon/view/product/488607
     pub fn default_small_bldc() -> Self {
         Self {
-            // Electrical (typical small BLDC ~100W)
-            r_s: 0.5,       // 0.5 Ohm phase resistance
-            l_d: 0.0005,    // 0.5 mH d-axis inductance
-            l_q: 0.0005,    // 0.5 mH q-axis inductance (assuming SPMSM)
-            lambda_m: 0.01, // 10 mWb flux linkage
+            // Electrical (Maxon EC-i 40 100W 48V)
+            // Terminal resistance 0.994 Ω (phase-to-phase) → 0.497 Ω per phase (Y-connection)
+            r_s: 0.497,
+            // Terminal inductance 0.995 mH (phase-to-phase) → 0.4975 mH per phase
+            l_d: 0.0004975,
+            l_q: 0.0004975, // SPMSM: Ld ≈ Lq
+            // Flux linkage calculated from torque constant: Kt = 91 mNm/A
+            // λm = Kt / (1.5 * P) = 0.091 / (1.5 * 7) ≈ 8.67 mWb
+            lambda_m: 0.00867,
 
             // Mechanical
-            j: 0.00001,        // 10 g⋅cm² rotor inertia
-            b: 0.00001,        // Small viscous friction
-            t_friction: 0.001, // 1 mN⋅m Coulomb friction
+            j: 0.0000044,      // 44 g⋅cm² = 44e-7 kg⋅m² rotor inertia
+            b: 0.00001,        // Small viscous friction (estimated)
+            t_friction: 0.001, // 1 mN⋅m Coulomb friction (estimated)
 
-            // Construction (matches g4-driver)
-            pole_pairs: 6,
+            // Construction (Maxon EC-i 40)
+            pole_pairs: 7,
 
-            // Limits (matches g4-driver 24V system)
-            i_max: 10.0,                                       // 10A max current
-            v_dc: 24.0,                                        // 24V DC bus
-            omega_max: 4000.0 * core::f32::consts::TAU / 60.0, // 4000 RPM max
+            // Limits (Maxon EC-i 40 100W 48V)
+            i_max: 10.0, // 10A max continuous (conservative)
+            v_dc: 48.0,  // 48V DC bus
+            omega_max: 8000.0 * core::f32::consts::TAU / 60.0, // 8000 RPM max
         }
     }
 
@@ -202,7 +207,8 @@ mod tests {
     #[test]
     fn test_default_params() {
         let params = MotorParams::default();
-        assert_eq!(params.pole_pairs, 6);
+        // Maxon EC-i 40 has 7 pole pairs
+        assert_eq!(params.pole_pairs, 7);
         assert!(params.r_s > 0.0);
         assert!(params.l_d > 0.0);
         assert!(params.lambda_m > 0.0);
@@ -221,7 +227,7 @@ mod tests {
         let params = MotorParams::default();
         let omega_m = 100.0; // rad/s mechanical
         let omega_e = params.omega_e(omega_m);
-        assert!((omega_e - omega_m * 6.0).abs() < 0.001);
+        assert!((omega_e - omega_m * params.pole_pairs as f32).abs() < 0.001);
 
         let back_to_omega_m = params.omega_m(omega_e);
         assert!((omega_m - back_to_omega_m).abs() < 0.001);
