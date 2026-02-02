@@ -24,6 +24,39 @@ FOC制御シミュレーションの結果です。`bldc-sim`クレートで生�
 
 ![Ramp Response](docs/images/simulation/ramp_0_to_500.png)
 
+### Simulation Parameters
+
+#### Motor Parameters (Small BLDC ~100W)
+
+| Parameter | Value | Unit | Description |
+|-----------|-------|------|-------------|
+| R_s | 0.5 | Ω | Stator resistance per phase |
+| L_d | 0.5 | mH | d-axis inductance |
+| L_q | 0.5 | mH | q-axis inductance |
+| λ_m | 10 | mWb | PM flux linkage |
+| J | 10 | g·cm² | Rotor inertia |
+| B | 0.00001 | N·m·s/rad | Viscous friction |
+| Pole pairs | 6 | - | Number of pole pairs |
+| V_dc | 24 | V | DC bus voltage |
+| I_max | 10 | A | Maximum phase current |
+
+#### FOC Controller Parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Kp | 0.5 | Speed PI proportional gain |
+| Ki | 0.05 | Speed PI integral gain |
+| Max acceleration | 500 RPM/s | Speed ramp rate limit |
+| Control frequency | 2.5 kHz | FOC update rate |
+
+#### Simulation Settings
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Physics dt | 10 μs | Integration time step |
+| Control period | 400 μs | FOC control loop period |
+| Integration method | RK4 | Runge-Kutta 4th order |
+
 ## Documentation
 
 - [STSPIN32G4 Datasheet (PDF)](https://www.st.com/resource/en/datasheet/stspin32g4.pdf)
