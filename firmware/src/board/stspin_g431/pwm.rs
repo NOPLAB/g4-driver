@@ -71,6 +71,7 @@ impl MotorDriver {
 
     /// 各チャネルを個別に有効/無効化
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn set_channels(&mut self, enable_u: bool, enable_v: bool, enable_w: bool) {
         <Self as PwmDriver>::set_channels(self, enable_u, enable_v, enable_w)
     }

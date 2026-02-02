@@ -24,6 +24,6 @@ pub use traits::{BootstrapChargeable, GateDriverControl, HallSensorInterface, Pw
 
 // STSPIN32G4ボード固有実装をデフォルトとしてre-export
 pub use stspin_g431::{
-    calculate_speed_rpm, get_hall_state, get_period_cycles, get_snapshot, reset_state, LedPins,
-    MotorDriver, StspinG431Board,
+    calculate_speed_rpm, get_hall_state, get_snapshot, reset_state, LedPins, MotorDriver,
+    StspinG431Board,
 };

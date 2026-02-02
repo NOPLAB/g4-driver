@@ -5,4 +5,3 @@
 mod hall_adapter;
 
 pub use hall_adapter::HallSensorAdapter;
-pub use hall_adapter::HallStateReaderAdapter;

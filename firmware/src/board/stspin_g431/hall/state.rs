@@ -38,6 +38,7 @@ pub fn get_hall_state() -> u8 {
 ///
 /// 注: 一貫性が必要な場合は `get_snapshot()` を使用してください
 #[inline(always)]
+#[allow(dead_code)]
 pub fn get_period_cycles() -> u32 {
     PERIOD_CYCLES.load(Ordering::Acquire)
 }

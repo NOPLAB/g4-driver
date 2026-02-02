@@ -199,6 +199,7 @@ impl HallStateReader for HallSensorAdapter {
 ///
 /// This is a zero-sized type that provides HallStateReader implementation
 /// without requiring a full HallSensorAdapter.
+#[allow(dead_code)]
 pub struct HallStateReaderAdapter;
 
 impl HallStateReader for HallStateReaderAdapter {

@@ -6,7 +6,7 @@ description = "BLDC motor physics simulation for FOC control validation"
 license = "MIT"
 
 [dependencies]
-bldc = { path = "../bldc" }
+bldc = { path = "../bldc", features = ["hall", "state-machine"] }
 libm = "0.2"
 
 # Optional dependencies for output

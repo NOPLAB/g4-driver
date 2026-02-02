@@ -12,6 +12,7 @@ calibration = []
 encoder = []
 sensorless = []
 std = []
+state-machine = []
 
 [dependencies]
 libm = "0.2"

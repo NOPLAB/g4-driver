@@ -101,6 +101,59 @@ impl PwmDuty {
     }
 }
 
+/// Control mode for the motor state machine
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlMode {
+    /// Open-loop control (startup/recovery)
+    #[default]
+    OpenLoop,
+    /// Field Oriented Control (closed-loop speed control)
+    Foc,
+    /// Motor calibration
+    Calibration,
+}
+
+/// Control input trait for providing control commands to the state machine
+///
+/// This trait abstracts the source of control commands (e.g., CAN bus, simulation).
+pub trait ControlInput {
+    /// Get the target speed in RPM
+    fn target_speed(&self) -> f32;
+
+    /// Get the PI gains (Kp, Ki)
+    fn pi_gains(&self) -> (f32, f32);
+
+    /// Check if calibration is requested
+    fn calibration_requested(&self) -> bool;
+
+    /// Get the calibration torque (0.0 to 1.0)
+    fn calibration_torque(&self) -> f32;
+
+    /// Check if motor should be enabled
+    fn motor_enabled(&self) -> bool {
+        true
+    }
+}
+
+/// Status output trait for reporting motor status
+///
+/// This trait abstracts the destination of status updates (e.g., CAN bus, simulation logging).
+pub trait StatusOutput {
+    /// Update motor status (speed and electrical angle)
+    fn update_status(&mut self, speed_rpm: f32, electrical_angle: f32);
+
+    /// Called when control mode changes
+    fn on_mode_change(&mut self, mode: ControlMode);
+
+    /// Called when stall is detected
+    fn on_stall_detected(&mut self);
+
+    /// Called when calibration completes
+    fn on_calibration_complete(&mut self, success: bool, offset: f32, inversed: bool) {
+        let _ = (success, offset, inversed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

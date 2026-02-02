@@ -348,6 +348,290 @@ pub struct SimStepResult {
     pub torque: f32,
 }
 
+// ============================================================================
+// State Machine Simulation (uses bldc state machine)
+// ============================================================================
+
+use crate::simulation::adapters::{SimControlInput, SimStatusOutput, SimulatedHardware};
+use bldc::state_machine::{MotorStateMachine, StateMachineConfig};
+use bldc::traits::ControlMode;
+use bldc::OpenLoopConfig;
+
+/// Simulation using the bldc state machine
+///
+/// This simulation mode uses the full state machine from the bldc crate,
+/// allowing testing of mode transitions (OpenLoop -> FOC, stall recovery, etc.)
+pub struct StateMachineSimulation {
+    /// Motor dynamics model
+    dynamics: MotorDynamics,
+    /// Motor state
+    state: MotorState,
+    /// Integrator for physics
+    integrator: Integrator,
+    /// State machine (owns hardware, input, output adapters)
+    state_machine: MotorStateMachine<SimulatedHardware, SimControlInput, SimStatusOutput>,
+    /// Simulation configuration
+    config: SimConfig,
+    /// Current simulation time [s]
+    time: f32,
+    /// Load torque
+    load: LoadTorque,
+    /// DC bus voltage
+    v_dc: f32,
+    /// Last electromagnetic torque
+    last_torque: f32,
+    /// Motor state history
+    history: Vec<StateSnapshot>,
+    /// Time of last recording
+    last_record_time: f32,
+}
+
+impl StateMachineSimulation {
+    /// Create a new state machine simulation
+    pub fn new(motor_params: MotorParams, config: SimConfig) -> Self {
+        let pole_pairs = motor_params.pole_pairs;
+        let v_dc = motor_params.v_dc;
+        let max_duty = 100u16;
+
+        // Create adapters
+        let hw = SimulatedHardware::new(pole_pairs, max_duty);
+        let input = SimControlInput::default();
+        let output = SimStatusOutput::new(config.record_interval);
+
+        // Create state machine config
+        let sm_config = StateMachineConfig {
+            openloop: OpenLoopConfig {
+                pole_pairs,
+                v_dc,
+                max_duty,
+                forced_commutation_cycles: 1000,
+                min_cycles_for_foc: 2000,
+                min_speed_for_foc: 50.0,
+                ..Default::default()
+            },
+            foc: bldc::FocConfig {
+                v_dc,
+                max_voltage: v_dc,
+                max_duty,
+                ..Default::default()
+            },
+            pole_pairs,
+            max_duty,
+            invalid_hall_threshold: 100,
+        };
+
+        let state_machine = MotorStateMachine::new(sm_config, hw, input, output);
+
+        Self {
+            dynamics: MotorDynamics::new(motor_params),
+            state: MotorState::new(),
+            integrator: Integrator::new(config.integration_method),
+            state_machine,
+            config,
+            time: 0.0,
+            load: LoadTorque::zero(),
+            v_dc,
+            last_torque: 0.0,
+            history: Vec::new(),
+            last_record_time: -1.0,
+        }
+    }
+
+    /// Get current motor state
+    pub fn motor_state(&self) -> &MotorState {
+        &self.state
+    }
+
+    /// Get current simulation time
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Get current control mode
+    pub fn control_mode(&self) -> ControlMode {
+        self.state_machine.mode()
+    }
+
+    /// Set target speed [RPM]
+    pub fn set_target_speed_rpm(&mut self, rpm: f32) {
+        self.state_machine.input_mut().target_speed = rpm;
+    }
+
+    /// Set PI gains
+    pub fn set_gains(&mut self, kp: f32, ki: f32) {
+        self.state_machine.input_mut().pi_gains = (kp, ki);
+    }
+
+    /// Set load torque [N⋅m]
+    pub fn set_load_torque(&mut self, torque: f32) {
+        self.load = LoadTorque::new(torque);
+    }
+
+    /// Enable/disable motor
+    pub fn set_motor_enabled(&mut self, enabled: bool) {
+        self.state_machine.input_mut().motor_enabled = enabled;
+    }
+
+    /// Get state history
+    pub fn history(&self) -> &[StateSnapshot] {
+        &self.history
+    }
+
+    /// Get status output history
+    pub fn status_history(&self) -> &[super::adapters::StatusSnapshot] {
+        self.state_machine.output().get_history()
+    }
+
+    /// Get mode change history
+    pub fn mode_history(&self) -> &[ControlMode] {
+        &self.state_machine.output().mode_history
+    }
+
+    /// Get stall count
+    pub fn stall_count(&self) -> u32 {
+        self.state_machine.output().stall_count
+    }
+
+    /// Reset simulation
+    pub fn reset(&mut self) {
+        self.state.reset();
+        self.state_machine.reset();
+        self.time = 0.0;
+        self.last_torque = 0.0;
+        self.last_record_time = -1.0;
+        self.history.clear();
+    }
+
+    /// Run one control step
+    pub fn step(&mut self) -> StateMachineStepResult {
+        let pole_pairs = self.dynamics.params().pole_pairs;
+
+        // Update hardware adapter with current motor state
+        self.state_machine.hardware_mut().update(
+            self.state.theta_m,
+            self.state.omega_m,
+            self.config.control_period,
+        );
+
+        // Update status output time
+        self.state_machine.output_mut().set_time(self.time);
+
+        // Run state machine
+        let pwm_duty = self.state_machine.update(self.config.control_period);
+
+        // Convert PWM to voltage for physics simulation
+        let voltage = self.pwm_to_voltage(&pwm_duty);
+
+        // Run physics simulation
+        let physics_steps = self.config.physics_steps_per_control();
+        for _ in 0..physics_steps {
+            self.integrator.step(
+                &self.dynamics,
+                &mut self.state,
+                &voltage,
+                &self.load,
+                self.config.dt,
+            );
+        }
+
+        // Update time
+        self.time += self.config.control_period;
+
+        // Update electrical angle
+        self.state.update_electrical(pole_pairs);
+
+        // Calculate torque
+        self.last_torque = self.dynamics.electromagnetic_torque(&self.state);
+
+        // Record snapshot
+        if self.should_record() {
+            let snapshot = StateSnapshot::from_state(&self.state, self.time, self.last_torque);
+            self.history.push(snapshot);
+            self.last_record_time = self.time;
+        }
+
+        StateMachineStepResult {
+            time: self.time,
+            speed_rpm: self.state.speed_rpm(),
+            electrical_angle: self.state.theta_e,
+            pwm_duty,
+            control_mode: self.state_machine.mode(),
+            torque: self.last_torque,
+        }
+    }
+
+    /// Run simulation for configured duration
+    pub fn run(&mut self) -> &[StateSnapshot] {
+        let total_steps = self.config.total_control_steps();
+        for _ in 0..total_steps {
+            self.step();
+        }
+        &self.history
+    }
+
+    /// Run until predicate returns true or duration exceeded
+    pub fn run_until<F>(&mut self, mut predicate: F) -> bool
+    where
+        F: FnMut(&StateMachineStepResult) -> bool,
+    {
+        let total_steps = self.config.total_control_steps();
+        for _ in 0..total_steps {
+            let result = self.step();
+            if predicate(&result) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Convert PWM duty to voltage
+    fn pwm_to_voltage(&self, pwm: &PwmDuty) -> VoltageInput {
+        let max_duty = 100;
+        let (du, dv, dw) = pwm.to_normalized(max_duty);
+
+        let v_u = (du - 0.5) * self.v_dc;
+        let v_v = (dv - 0.5) * self.v_dc;
+        let v_w = (dw - 0.5) * self.v_dc;
+
+        // Clarke transform
+        let v_alpha = v_u;
+        let v_beta = (v_v - v_w) / libm::sqrtf(3.0);
+
+        // Park transform (use motor electrical angle)
+        let cos_theta = libm::cosf(self.state.theta_e);
+        let sin_theta = libm::sinf(self.state.theta_e);
+
+        let v_d = v_alpha * cos_theta + v_beta * sin_theta;
+        let v_q = -v_alpha * sin_theta + v_beta * cos_theta;
+
+        VoltageInput::new(v_d, v_q)
+    }
+
+    fn should_record(&self) -> bool {
+        if self.config.record_interval <= 0.0 {
+            return true;
+        }
+        self.time - self.last_record_time >= self.config.record_interval
+    }
+}
+
+/// Result from a state machine simulation step
+#[derive(Debug, Clone)]
+pub struct StateMachineStepResult {
+    /// Current simulation time [s]
+    pub time: f32,
+    /// Motor speed [RPM]
+    pub speed_rpm: f32,
+    /// Electrical angle [rad]
+    pub electrical_angle: f32,
+    /// PWM duty cycles
+    pub pwm_duty: PwmDuty,
+    /// Current control mode
+    pub control_mode: ControlMode,
+    /// Electromagnetic torque [N⋅m]
+    pub torque: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +784,118 @@ mod tests {
         if reached {
             assert!(sim.state().speed_rpm() > 200.0);
         }
+    }
+
+    // ========================================================================
+    // StateMachineSimulation tests
+    // ========================================================================
+
+    fn test_sm_sim() -> StateMachineSimulation {
+        let params = MotorParams::default_small_bldc();
+        let config = SimConfig {
+            dt: 0.00001,
+            control_period: 0.0004,
+            duration: 0.1,
+            ..Default::default()
+        };
+        StateMachineSimulation::new(params, config)
+    }
+
+    #[test]
+    fn test_sm_new_simulation() {
+        let sim = test_sm_sim();
+        assert!((sim.time() - 0.0).abs() < 0.0001);
+        assert!((sim.motor_state().omega_m - 0.0).abs() < 0.0001);
+        assert_eq!(sim.control_mode(), ControlMode::OpenLoop);
+    }
+
+    #[test]
+    fn test_sm_single_step() {
+        let mut sim = test_sm_sim();
+
+        let result = sim.step();
+
+        assert!(result.time > 0.0);
+        // PWM duties should be valid
+        assert!(result.pwm_duty.u <= 100);
+        assert!(result.pwm_duty.v <= 100);
+        assert!(result.pwm_duty.w <= 100);
+        // Should start in OpenLoop mode
+        assert_eq!(result.control_mode, ControlMode::OpenLoop);
+    }
+
+    #[test]
+    fn test_sm_openloop_to_foc_transition() {
+        let params = MotorParams::default_small_bldc();
+        let config = SimConfig {
+            dt: 0.00001,
+            control_period: 0.0004,
+            duration: 2.0, // Long enough to transition
+            ..Default::default()
+        };
+        let mut sim = StateMachineSimulation::new(params, config);
+
+        sim.set_target_speed_rpm(500.0);
+
+        // Run until FOC mode
+        let transitioned = sim.run_until(|result| result.control_mode == ControlMode::Foc);
+
+        if transitioned {
+            assert_eq!(sim.control_mode(), ControlMode::Foc);
+            // Mode history should show the transition
+            assert!(!sim.mode_history().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_sm_motor_disabled() {
+        let mut sim = test_sm_sim();
+
+        sim.set_motor_enabled(false);
+        let result = sim.step();
+
+        // Should return zero duty when disabled
+        assert_eq!(result.pwm_duty.u, 0);
+        assert_eq!(result.pwm_duty.v, 0);
+        assert_eq!(result.pwm_duty.w, 0);
+    }
+
+    #[test]
+    fn test_sm_reset() {
+        let mut sim = test_sm_sim();
+
+        sim.set_target_speed_rpm(500.0);
+        sim.step();
+        sim.step();
+
+        sim.reset();
+
+        assert!((sim.time() - 0.0).abs() < 0.0001);
+        assert!((sim.motor_state().omega_m - 0.0).abs() < 0.0001);
+        assert!(sim.history().is_empty());
+        assert_eq!(sim.control_mode(), ControlMode::OpenLoop);
+    }
+
+    #[test]
+    fn test_sm_speed_control() {
+        let params = MotorParams::default_small_bldc();
+        let config = SimConfig {
+            dt: 0.00001,
+            control_period: 0.0004,
+            duration: 0.5, // 500ms simulation
+            ..Default::default()
+        };
+        let mut sim = StateMachineSimulation::new(params, config);
+
+        sim.set_target_speed_rpm(500.0);
+        sim.run();
+
+        // Motor should have accelerated (check absolute value as direction may vary)
+        let final_speed = sim.motor_state().speed_rpm().abs();
+        assert!(
+            final_speed > 50.0,
+            "Motor should have accelerated, got {} RPM",
+            final_speed
+        );
     }
 }

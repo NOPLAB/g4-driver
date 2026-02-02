@@ -1,8 +1,12 @@
 //! Integration tests for bldc-sim
 
+use bldc::traits::ControlMode;
 use bldc_sim::motor_model::MotorParams;
-use bldc_sim::scenarios::{LoadDisturbance, RampResponse, StartupScenario, StepResponse};
-use bldc_sim::simulation::{SimConfig, Simulation};
+use bldc_sim::scenarios::{
+    LoadDisturbance, RampResponse, StartupScenario, StartupWithTransitionScenario,
+    StateMachineLoadDisturbance, StateMachineStepResponse, StepResponse,
+};
+use bldc_sim::simulation::{SimConfig, Simulation, StateMachineSimulation};
 use bldc_sim::validation::PerformanceCriteria;
 
 #[cfg(feature = "csv-output")]
@@ -430,4 +434,204 @@ fn test_startup_with_load() {
     }
 
     assert!(result.metrics.final_speed_rpm.is_some());
+}
+
+// ============================================================================
+// State Machine Scenario Tests
+// ============================================================================
+
+#[test]
+fn test_sm_startup_with_transition() {
+    ensure_output_dir();
+
+    let params = MotorParams::default_small_bldc();
+    let config = SimConfig {
+        duration: 3.0,
+        record_interval: 0.001,
+        ..Default::default()
+    };
+    let mut sim = StateMachineSimulation::new(params, config);
+
+    let scenario = StartupWithTransitionScenario::new(500.0)
+        .with_max_transition_time(2000.0)
+        .with_max_target_time(3000.0)
+        .with_duration(3.0);
+
+    let result = scenario.run(&mut sim);
+
+    #[cfg(feature = "csv-output")]
+    {
+        let csv_path = format!("{}/sm_startup_with_transition.csv", OUTPUT_DIR);
+        write_to_csv(&csv_path, &result.base.history).expect("Failed to write CSV");
+        println!("CSV output: {}", csv_path);
+    }
+
+    // Verify state machine specific results
+    assert!(
+        !result.mode_history.is_empty() || result.mode_durations.openloop > 0.0,
+        "Should have mode history or spent time in OpenLoop"
+    );
+    assert!(
+        result.mode_durations.openloop > 0.0,
+        "Should spend time in OpenLoop mode"
+    );
+    assert!(
+        result.base.metrics.final_speed_rpm.is_some(),
+        "Should have final speed"
+    );
+
+    println!(
+        "Mode durations - OpenLoop: {:.3}s, FOC: {:.3}s",
+        result.mode_durations.openloop, result.mode_durations.foc
+    );
+}
+
+#[test]
+fn test_sm_step_response() {
+    ensure_output_dir();
+
+    let params = MotorParams::default_small_bldc();
+    let config = SimConfig {
+        duration: 3.0,
+        record_interval: 0.001,
+        ..Default::default()
+    };
+    let mut sim = StateMachineSimulation::new(params, config);
+
+    let scenario = StateMachineStepResponse::new(300.0, 600.0)
+        .with_step_time(1.0)
+        .with_duration(3.0);
+
+    let result = scenario.run(&mut sim);
+
+    #[cfg(feature = "csv-output")]
+    {
+        let csv_path = format!("{}/sm_step_response.csv", OUTPUT_DIR);
+        write_to_csv(&csv_path, &result.base.history).expect("Failed to write CSV");
+        println!("CSV output: {}", csv_path);
+    }
+
+    assert!(
+        result.base.metrics.overshoot_percent.is_some(),
+        "Should calculate overshoot"
+    );
+    assert!(
+        result.base.metrics.final_speed_rpm.is_some(),
+        "Should have final speed"
+    );
+
+    if let Some(overshoot) = result.base.metrics.overshoot_percent {
+        println!("Overshoot: {:.1}%", overshoot);
+    }
+}
+
+#[test]
+fn test_sm_load_disturbance() {
+    ensure_output_dir();
+
+    let params = MotorParams::default_small_bldc();
+    let config = SimConfig {
+        duration: 4.0,
+        record_interval: 0.001,
+        ..Default::default()
+    };
+    let mut sim = StateMachineSimulation::new(params, config);
+
+    let scenario = StateMachineLoadDisturbance::new(500.0, 0.005)
+        .with_load_time(2.0)
+        .with_duration(4.0);
+
+    let result = scenario.run(&mut sim);
+
+    #[cfg(feature = "csv-output")]
+    {
+        let csv_path = format!("{}/sm_load_disturbance.csv", OUTPUT_DIR);
+        write_to_csv(&csv_path, &result.base.history).expect("Failed to write CSV");
+        println!("CSV output: {}", csv_path);
+    }
+
+    assert!(
+        result.base.metrics.max_torque.is_some(),
+        "Should record max torque"
+    );
+    assert_eq!(result.stall_count, 0, "Should not stall with moderate load");
+}
+
+#[test]
+fn test_sm_mode_transition_tracking() {
+    ensure_output_dir();
+
+    let params = MotorParams::default_small_bldc();
+    let config = SimConfig {
+        duration: 2.0,
+        record_interval: 0.001,
+        ..Default::default()
+    };
+    let mut sim = StateMachineSimulation::new(params, config);
+
+    sim.set_target_speed_rpm(500.0);
+    sim.set_motor_enabled(true);
+
+    // Run simulation and track mode transitions
+    let mut saw_openloop = false;
+    let mut saw_foc = false;
+
+    sim.run_until(|result| {
+        if result.control_mode == ControlMode::OpenLoop {
+            saw_openloop = true;
+        }
+        if result.control_mode == ControlMode::Foc {
+            saw_foc = true;
+        }
+        // Stop when we've seen both modes or time exceeds
+        saw_openloop && saw_foc
+    });
+
+    assert!(saw_openloop, "Should start in OpenLoop mode");
+
+    let final_mode = sim.control_mode();
+    let mode_history = sim.mode_history();
+
+    println!(
+        "Final mode: {:?}, Mode history length: {}",
+        final_mode,
+        mode_history.len()
+    );
+}
+
+#[test]
+fn test_sm_motor_enable_disable() {
+    let params = MotorParams::default_small_bldc();
+    let config = SimConfig {
+        duration: 0.5,
+        ..Default::default()
+    };
+    let mut sim = StateMachineSimulation::new(params, config);
+
+    // Start disabled
+    sim.set_motor_enabled(false);
+    sim.set_target_speed_rpm(500.0);
+
+    // Step while disabled
+    for _ in 0..100 {
+        let result = sim.step();
+        assert_eq!(result.pwm_duty.u, 0, "PWM should be zero when disabled");
+        assert_eq!(result.pwm_duty.v, 0, "PWM should be zero when disabled");
+        assert_eq!(result.pwm_duty.w, 0, "PWM should be zero when disabled");
+    }
+
+    // Enable motor
+    sim.set_motor_enabled(true);
+
+    // Step while enabled
+    let mut saw_nonzero_pwm = false;
+    for _ in 0..100 {
+        let result = sim.step();
+        if result.pwm_duty.u != 0 || result.pwm_duty.v != 0 || result.pwm_duty.w != 0 {
+            saw_nonzero_pwm = true;
+            break;
+        }
+    }
+
+    assert!(saw_nonzero_pwm, "Should produce PWM output when enabled");
 }

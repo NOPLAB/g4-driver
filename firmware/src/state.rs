@@ -262,6 +262,7 @@ impl OpenLoopCounters {
 
     /// 逆回転フラグを設定
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn set_reverse(&self, reverse: bool) {
         self.reverse_flag
             .store(if reverse { 1 } else { 0 }, Ordering::Relaxed);

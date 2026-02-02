@@ -44,8 +44,11 @@
 //! }
 //! ```
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
+
+#[cfg(feature = "std")]
+extern crate std;
 
 #[cfg(feature = "calibration")]
 pub mod calibration;
@@ -55,6 +58,8 @@ pub mod modulation;
 pub mod position;
 #[cfg(feature = "hall")]
 pub mod sensors;
+#[cfg(feature = "state-machine")]
+pub mod state_machine;
 pub mod traits;
 pub mod transforms;
 
@@ -65,4 +70,16 @@ pub use control::{
     OpenLoopPhase, PiController, SpeedRamp, StallDetector, StallDetectorConfig,
 };
 pub use position::ShaftPosition;
-pub use traits::{CurrentSensor, HallStateReader, PositionSensor, PwmDuty, PwmOutput, SpeedSensor};
+pub use traits::{
+    ControlInput, ControlMode, CurrentSensor, HallStateReader, PositionSensor, PwmDuty, PwmOutput,
+    SpeedSensor, StatusOutput,
+};
+
+// State machine re-exports (when feature is enabled)
+#[cfg(all(feature = "state-machine", feature = "calibration"))]
+pub use state_machine::CalibrationMode;
+#[cfg(feature = "state-machine")]
+pub use state_machine::{
+    ControlState, FocMode, ModeOutput, MotorStateMachine, OpenLoopMode, StateMachineBuilder,
+    StateMachineConfig, StateTransition,
+};

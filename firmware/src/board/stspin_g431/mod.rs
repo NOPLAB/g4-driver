@@ -26,10 +26,7 @@ use embassy_stm32::{
 use crate::board::traits::GateDriverControl;
 
 pub use gate::{bootstrap_charge, GateDriver, GateDriverError};
-pub use hall::{
-    calculate_speed_rpm, get_hall_state, get_period_cycles, get_snapshot, init_hall_timer,
-    reset_state,
-};
+pub use hall::{calculate_speed_rpm, get_hall_state, get_snapshot, init_hall_timer, reset_state};
 pub use pwm::MotorDriver;
 
 use crate::fmt::*;

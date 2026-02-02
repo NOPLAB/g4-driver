@@ -158,6 +158,11 @@ impl MotorCalibration {
         self.torque = torque.clamp(0.01, 0.5);
     }
 
+    /// Get current torque value
+    pub fn get_torque(&self) -> f32 {
+        self.torque
+    }
+
     // === State handlers ===
 
     fn handle_init(&mut self) -> Result<(f32, f32), CalibrationError> {
