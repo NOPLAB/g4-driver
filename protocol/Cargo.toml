@@ -10,3 +10,6 @@ defmt = { version = "1.0.1", optional = true }
 [features]
 default = []
 defmt = ["dep:defmt"]
+
+[lints.rust]
+missing_docs = "deny"
