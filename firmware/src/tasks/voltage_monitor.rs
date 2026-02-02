@@ -2,7 +2,10 @@
 //!
 //! DCバス電圧を監視し、過電圧/低電圧を検出してモーターを保護します。
 
-use embassy_stm32::{adc::Adc, peripherals};
+use embassy_stm32::{
+    adc::{Adc, AnyAdcChannel, SampleTime},
+    peripherals,
+};
 use embassy_time::{Duration, Ticker};
 
 use crate::fmt::*;
@@ -13,7 +16,7 @@ use crate::voltage_monitor::{VoltageMonitor, VoltageMonitorConfig};
 #[embassy_executor::task]
 pub async fn voltage_monitor_task(
     mut adc: Adc<'static, peripherals::ADC2>,
-    mut voltage_pin: embassy_stm32::adc::AnyAdcChannel<peripherals::ADC2>,
+    mut voltage_pin: AnyAdcChannel<'static, peripherals::ADC2>,
 ) {
     info!("Voltage monitor task started");
 
@@ -31,7 +34,7 @@ pub async fn voltage_monitor_task(
     info!("Voltage monitor initialized: OV=30V, UV=10V");
 
     // 初回ADC読み取りでフィルタを初期化（起動時のUNDERVOLTAGE誤検出を防ぐ）
-    let initial_adc = adc.blocking_read(&mut voltage_pin);
+    let initial_adc = adc.blocking_read(&mut voltage_pin, SampleTime::CYCLES640_5);
     monitor.initialize_with_adc(initial_adc); // フィルタを実電圧で初期化
     let state = monitor.get_state();
     info!(
@@ -49,7 +52,7 @@ pub async fn voltage_monitor_task(
         ticker.next().await;
 
         // ADCから電圧を読み取り
-        let adc_raw = adc.blocking_read(&mut voltage_pin);
+        let adc_raw = adc.blocking_read(&mut voltage_pin, SampleTime::CYCLES640_5);
 
         // デバッグ: ADC生値とADC電圧を計算（33.3kΩ + 3.3kΩ分圧）
         let v_adc = (adc_raw as f32 / 4096.0) * 3.3;

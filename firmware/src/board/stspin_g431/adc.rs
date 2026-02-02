@@ -3,7 +3,7 @@
 //! ADC2を使用した電圧監視
 
 use embassy_stm32::{
-    adc::{Adc, AdcChannel, AnyAdcChannel, SampleTime},
+    adc::{Adc, AdcChannel, AdcConfig, AnyAdcChannel},
     peripherals, Peri,
 };
 
@@ -17,10 +17,9 @@ pub fn init_adc(
     voltage_pin: Peri<'static, peripherals::PC1>,
 ) -> (
     Adc<'static, peripherals::ADC2>,
-    AnyAdcChannel<peripherals::ADC2>,
+    AnyAdcChannel<'static, peripherals::ADC2>,
 ) {
-    let mut adc = Adc::new(adc_peri);
-    adc.set_sample_time(SampleTime::CYCLES640_5);
+    let adc = Adc::new(adc_peri, AdcConfig::default());
 
     let pin = voltage_pin.degrade_adc();
 

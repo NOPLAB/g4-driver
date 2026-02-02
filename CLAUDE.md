@@ -6,10 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 STM32G431VBTxマイコンを使用したBLDCモータードライバー。Hall センサベースの FOC（Field Oriented Control）実装で、CAN 通信によるモーター制御を行う Embassy 非同期フレームワークベースの組み込み Rust プロジェクト。
 
-**プロジェクト構造**:
+**プロジェクト構造**（ワークスペース）:
 - `firmware/` - STM32組み込みファームウェア（`no_std`、Embassy ベース）
 - `controller/` - CAN通信用デスクトップGUIコントローラー（Dioxus、`std`）
+- `bldc/` - ハードウェア非依存BLDCモーター制御ライブラリ（`no_std`対応）
+- `bldc-sim/` - FOC制御検証用物理シミュレーション
+- `protocol/` - CAN通信プロトコル定義（ファームウェア/コントローラー共有）
 - `scripts/` - CANデバッグ用Bashスクリプト
+
+**参考資料**:
+- [STSPIN32G4 Datasheet (PDF)](https://www.st.com/resource/en/datasheet/stspin32g4.pdf)
+- [STSPIN32G4 Product Page](https://www.st.com/en/motor-drivers/stspin32g4.html)
 
 ## 開発コマンド
 
@@ -45,6 +52,20 @@ cargo run
 # リリースビルド
 cargo run --release
 ```
+
+### テスト（ルートディレクトリ）
+
+```bash
+# ワークスペース全体のテスト（bldc、bldc-sim、protocol）
+cargo test
+
+# 特定クレートのテスト
+cargo test -p bldc
+cargo test -p bldc-sim
+cargo test -p g4-driver-protocol
+```
+
+**注意**: ファームウェアは`no_std`のためホストでのテスト不可。`bldc`クレートでアルゴリズムをテスト。
 
 ### Pre-commit hooks
 
@@ -122,10 +143,18 @@ sudo ip link set up can0
 **主要モジュール**:
 - `config/` - パラメータ定義、EEPROM永続化
 - `state.rs` - タスク間共有状態（Mutex保護、コンテキストベース管理）
-- `foc/` - FOCアルゴリズム（HallSensor、PiController、SVPWM、Transforms）
 - `hall_tim.rs` - TIM4ハードウェアHallインターフェース
 - `motor_driver.rs` - PWM制御抽象化
-- `can_protocol.rs` - CANプロトコル定義
+
+### bldcクレート（ハードウェア非依存）
+
+ファームウェアのFOCロジックを分離した`no_std`対応ライブラリ:
+- `pi_controller.rs` - PI制御器（アンチワインドアップ対応）
+- `svpwm.rs` - 空間ベクトルPWM
+- `transforms.rs` - Clarke/Park変換
+- `hall_sensor.rs` - Hallセンサー状態管理
+
+**フィーチャフラグ**: `hall`（デフォルト）、`calibration`、`encoder`、`sensorless`、`std`
 
 ### コントローラーアーキテクチャ
 
@@ -134,6 +163,10 @@ sudo ip link set up can0
 - `state.rs` - アプリケーション状態管理
 - `can/` - CAN通信（protocol、manager、setup）
 - `ui/` - Dioxus UIコンポーネント（connection、control、settings）
+
+### protocolクレート
+
+ファームウェアとコントローラーで共有するCANプロトコル定義。`defmt`フィーチャでファームウェア向けデバッグ出力対応。
 
 ### CANプロトコル
 

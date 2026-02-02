@@ -50,7 +50,7 @@ pub struct Peripherals<'d> {
     /// ADC
     pub adc: Adc<'d, peripherals::ADC2>,
     /// 電圧監視ピン
-    pub voltage_pin: AnyAdcChannel<peripherals::ADC2>,
+    pub voltage_pin: AnyAdcChannel<'d, peripherals::ADC2>,
     /// LEDピン
     pub leds: LedPins<'d>,
     /// Flash（設定保存用）

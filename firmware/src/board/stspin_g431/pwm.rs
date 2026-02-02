@@ -26,7 +26,7 @@ use crate::config;
 /// STM32のComplementaryPwmを使用して3相ブラシレスモーターを駆動します。
 pub struct MotorDriver {
     pwm: ComplementaryPwm<'static, peripherals::TIM1>,
-    max_duty: u16,
+    max_duty: u32,
 }
 
 impl MotorDriver {
@@ -42,7 +42,7 @@ impl MotorDriver {
     /// PWMの最大Duty値を取得
     #[inline(always)]
     pub fn max_duty(&self) -> u16 {
-        self.max_duty
+        self.max_duty as u16
     }
 
     /// 3相全てのDuty比を設定
@@ -79,14 +79,14 @@ impl MotorDriver {
 impl PwmDriver for MotorDriver {
     #[inline(always)]
     fn max_duty(&self) -> u16 {
-        self.max_duty
+        self.max_duty as u16
     }
 
     #[inline(always)]
     fn set_duty_uvw(&mut self, duty_u: u16, duty_v: u16, duty_w: u16) {
-        self.pwm.set_duty(Channel::Ch1, duty_u);
-        self.pwm.set_duty(Channel::Ch2, duty_v);
-        self.pwm.set_duty(Channel::Ch3, duty_w);
+        self.pwm.set_duty(Channel::Ch1, duty_u.into());
+        self.pwm.set_duty(Channel::Ch2, duty_v.into());
+        self.pwm.set_duty(Channel::Ch3, duty_w.into());
     }
 
     #[inline(always)]
