@@ -62,3 +62,21 @@ jobs:
         run: cargo build --package g4-driver-firmware --target thumbv7em-none-eabi
       - name: Build (release)
         run: cargo build --package g4-driver-firmware --target thumbv7em-none-eabi --release
+
+  simulation:
+    name: Simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install fontconfig
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - name: Run simulation tests
+        run: cargo test -p bldc-sim --features full-output
+      - name: Upload simulation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-results
+          path: bldc-sim/output/
+          retention-days: 30
