@@ -177,11 +177,11 @@ mod tests {
 
         // Rate limit 10V/s, dt=0.1s, max change is 1V
         let vd1 = fw.calculate_vd(4000.0, 10.0, 24.0, 0.1);
-        assert!(vd1 >= -1.1 && vd1 <= 0.0);
+        assert!((-1.1..=0.0).contains(&vd1));
 
         // Second call also rate limited
         let vd2 = fw.calculate_vd(4000.0, 10.0, 24.0, 0.1);
-        assert!(vd2 >= -2.1 && vd2 <= 0.0);
+        assert!((-2.1..=0.0).contains(&vd2));
         assert!(vd2 < vd1); // More negative
     }
 }

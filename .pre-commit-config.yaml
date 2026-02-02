@@ -2,16 +2,34 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
-  # Rust formatting and linting for firmware
+  # Rust formatting, linting and testing at workspace level
   - repo: local
     hooks:
-      - id: cargo-fmt-firmware
-        name: cargo fmt (firmware)
-        description: Format firmware Rust code with cargo fmt
-        entry: bash -c 'cd firmware && cargo fmt --all --check'
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Format Rust code with cargo fmt
+        entry: cargo fmt --all --check
         language: system
-        files: ^firmware/.*\.rs$
+        files: \.rs$
         pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint Rust code with cargo clippy
+        entry: cargo clippy --workspace --exclude g4-driver-firmware --all-targets --all-features -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+      - id: cargo-test
+        name: cargo test
+        description: Run Rust tests with cargo test
+        entry: cargo test
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+  # Firmware (separate target, requires individual handling)
+  - repo: local
+    hooks:
       - id: cargo-clippy-firmware
         name: cargo clippy (firmware)
         description: Lint firmware Rust code with cargo clippy
@@ -25,31 +43,6 @@ repos:
         entry: bash -c 'cd firmware && cargo build'
         language: system
         files: ^firmware/.*\.rs$
-        pass_filenames: false
-
-  # Rust formatting, linting and testing for controller
-  - repo: local
-    hooks:
-      - id: cargo-fmt-controller
-        name: cargo fmt (controller)
-        description: Format controller Rust code with cargo fmt
-        entry: bash -c 'cd controller && cargo fmt --all --check'
-        language: system
-        files: ^controller/.*\.rs$
-        pass_filenames: false
-      - id: cargo-clippy-controller
-        name: cargo clippy (controller)
-        description: Lint controller Rust code with cargo clippy
-        entry: bash -c 'cd controller && cargo clippy --all-targets --all-features -- -D warnings'
-        language: system
-        files: ^controller/.*\.rs$
-        pass_filenames: false
-      - id: cargo-test-controller
-        name: cargo test (controller)
-        description: Run controller Rust tests with cargo test
-        entry: bash -c 'cd controller && cargo test'
-        language: system
-        files: ^controller/.*\.rs$
         pass_filenames: false
 
   # General pre-commit hooks

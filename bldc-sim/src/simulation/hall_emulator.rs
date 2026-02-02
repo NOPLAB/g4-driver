@@ -202,7 +202,7 @@ mod tests {
         // Should have 36 state changes per revolution (6 pole pairs * 6 states)
         // Minus 1 because first reading doesn't count
         assert!(
-            state_changes >= 35 && state_changes <= 36,
+            (35..=36).contains(&state_changes),
             "Expected ~36 state changes, got {}",
             state_changes
         );

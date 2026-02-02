@@ -118,11 +118,14 @@ pub mod can_ids {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MotorStatus {
+    /// Current motor speed in RPM
     pub speed_rpm: f32,
+    /// Current electrical angle in radians
     pub electrical_angle: f32,
 }
 
 impl MotorStatus {
+    /// Creates a new MotorStatus with default values
     pub const fn new() -> Self {
         Self {
             speed_rpm: 0.0,
@@ -141,12 +144,16 @@ impl Default for MotorStatus {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VoltageStatus {
+    /// DC bus voltage in volts
     pub voltage: f32,
+    /// Overvoltage condition flag
     pub overvoltage: bool,
+    /// Undervoltage condition flag
     pub undervoltage: bool,
 }
 
 impl VoltageStatus {
+    /// Creates a new VoltageStatus with default values
     pub const fn new() -> Self {
         Self {
             voltage: 0.0,
@@ -166,12 +173,16 @@ impl Default for VoltageStatus {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CalibrationStatus {
+    /// Electrical offset in radians (0〜2π)
     pub electrical_offset: f32,
+    /// Direction inversion flag
     pub direction_inversed: bool,
+    /// Calibration success flag
     pub success: bool,
 }
 
 impl CalibrationStatus {
+    /// Creates a new CalibrationStatus with default values
     pub const fn new() -> Self {
         Self {
             electrical_offset: 0.0,
