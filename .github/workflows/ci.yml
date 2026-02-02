@@ -30,10 +30,8 @@ jobs:
           components: clippy
           targets: thumbv7em-none-eabi
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy (libraries)
-        run: cargo clippy --package bldc --package bldc-sim --package g4-driver-protocol -- -D warnings
-      - name: Clippy (controller)
-        run: cargo clippy --package g4-driver-controller -- -D warnings
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace --exclude g4-driver-firmware -- -D warnings
       - name: Clippy (firmware)
         run: cargo clippy --package g4-driver-firmware --target thumbv7em-none-eabi -- -D warnings
 
@@ -44,10 +42,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Test (libraries)
-        run: cargo test --package bldc --package bldc-sim --package g4-driver-protocol
-      - name: Test (controller)
-        run: cargo test --package g4-driver-controller
+      - name: Test (workspace)
+        run: cargo test --workspace --exclude g4-driver-firmware
 
   build-firmware:
     name: Build Firmware
