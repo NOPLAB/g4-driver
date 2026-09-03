@@ -1,6 +1,6 @@
 # This file was automatically generated.
 
 [toolchain]
-channel = "1.93.0"
+channel = "1.98.1"
 components = ["rust-src", "rustfmt", "clippy"]
 targets = ["thumbv7em-none-eabi"]
